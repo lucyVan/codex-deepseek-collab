@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -89,6 +90,7 @@ class DesktopPairingTests(unittest.TestCase):
             self.assertEqual(launch.launch_url, launch_url)
             self.assertNotEqual(calls[0][1]["stdout"], subprocess.PIPE)
             self.assertEqual(calls[0][1]["stderr"], subprocess.STDOUT)
+            self.assertEqual(calls[0][1]["start_new_session"], os.name != "nt")
             self.assertEqual(manager.launch_log_path,
                              self.root.resolve() / "private" / "desktop-launch.log")
             self.assertTrue(manager.launch_log_path.is_file())

@@ -159,6 +159,7 @@ class DesktopPairing:
                 stdout=output,
                 stderr=subprocess.STDOUT,
                 env=env,
+                start_new_session=os.name != "nt",
             )
         finally:
             output.close()
