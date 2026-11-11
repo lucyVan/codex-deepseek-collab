@@ -1,0 +1,11 @@
+{
+  "name": "@collab-local/codex-deepseek-presets",
+  "version": "0.7.0",
+  "private": true,
+  "type": "module",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

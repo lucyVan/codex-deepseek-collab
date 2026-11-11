@@ -1,0 +1,20 @@
+{
+  "name": "collab-local",
+  "plugins": [
+    {
+      "name": "codex-deepseek-collab",
+      "source": {
+        "source": "local",
+        "path": "./plugin"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_USE"
+      },
+      "category": "Developer Tools",
+      "interface": {
+        "displayName": "本地协作插件"
+      }
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "request_id": "replace-with-a-stable-task-key",
+  "root": "codex-deepseek-collab",
+  "goal": "Describe the authorized implementation and execution task",
+  "read_inputs": ["collab/controller.py"],
+  "write_paths": ["collab/controller.py"],
+  "constraints": ["Modify only the authorized write paths"],
+  "acceptance": ["The delivered files and actual command results satisfy the task goal"],
+  "timeout_seconds": 1800
+}

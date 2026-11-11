@@ -1,0 +1,27 @@
+{
+  "mcpServers": {
+    "codex_deepseek_collab": {
+      "command": "/Users/fanluxi/codex-deepseek/codex-deepseek-collab/.venv/bin/python",
+      "args": [
+        "-I",
+        "-B",
+        "/Users/fanluxi/codex-deepseek/codex-deepseek-collab/tools/mcp_collab.py",
+        "--state-root",
+        "/Users/fanluxi/codex-deepseek/runtime/macos/state",
+        "--execution-workspace",
+        "/Users/fanluxi/codex-deepseek"
+      ],
+      "cwd": "/Users/fanluxi/codex-deepseek",
+      "startup_timeout_sec": 20,
+      "tool_timeout_sec": 120,
+      "enabled_tools": [
+        "collab_status",
+        "collab_submit",
+        "collab_get",
+        "collab_wait",
+        "collab_cancel",
+        "collab_review"
+      ]
+    }
+  }
+}

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex × DeepSeek 协作"
+  short_description: "用户指定 DeepSeek 执行中等任务；Codex 设计与验收"
+  default_prompt: "使用 $collaborate 检查服务和已有任务；仅在我明确指定 DeepSeek 时派发，要求它自行运行、修复、复跑，由 Codex 验收。"

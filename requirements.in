@@ -1,0 +1,6 @@
+# Direct dependencies for Windows x64 / CPython 3.12.
+# fastapi was removed on 2026-11-11: the code no longer imports it (only starlette via mcp).
+# requirements.lock is cross-resolved for Windows x64/CPython 3.12 with uv.
+# Windows installation and runtime validation remain separate acceptance steps.
+uvicorn==0.54.0
+mcp==2.3.0
