@@ -5,9 +5,9 @@
 | 文件 | 关键职责 |
 |---|---|
 | `test_git_evidence.py` | 真实临时 git 仓库；exclude/patch/apply 一致、交付后变化、rebase、二进制、清理与失败关闭 |
-| `test_lightweight_controller.py` | submit/get/wait/cancel/review、恢复、apply 后崩溃重试、root lease |
+| `test_lightweight_controller.py` | submit/get/wait/cancel/review、每次任务工作区、恢复、apply 后崩溃重试、root lease |
 | `test_lightweight_store.py` | request 幂等、version、状态历史 |
-| `test_lightweight_scheduler.py` | 不同 root 并发、取消、启动与异常兜底 |
+| `test_lightweight_scheduler.py` | 每次任务工作区、不同 root 并发、取消、启动与异常兜底 |
 | `test_lightweight_mcp.py` | 真实本地 MCP 服务、stdio bridge、多 client 与认证 |
 | `test_desktop_*.py` | 私有 RPC、配对、Session 终态与人工输入边界，使用本地 fake Host |
 | `test_configuration.py` | macOS/Windows 配置布局与当前生成产物一致 |

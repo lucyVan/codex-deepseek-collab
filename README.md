@@ -1,6 +1,6 @@
 # Codex × DeepSeek 轻量协作（codex-deepseek-collab）
 
-当前源版本为 **0.27.0**，插件 ID 为 `codex-deepseek-collab@collab-local`。DeepSeek 在授权范围内实现、执行、修复和复跑；Codex 独立检查实际差异与执行证据，最终接受或拒绝。
+当前源版本为 **0.28.0**，插件 ID 为 `codex-deepseek-collab@collab-local`。DeepSeek 在授权范围内实现、执行、修复和复跑；Codex 独立检查实际差异与执行证据，最终接受或拒绝。
 
 ## 架构与公开契约
 
@@ -54,7 +54,7 @@ Windows 是明确支持目标；当前只完成 macOS 实机验证，**Windows �
 
 配置生成器只在本机写本机配置，不跨平台复制 `.venv`、lock、state、Cookie、token 或日志：
 
-当前安装的 execution workspace 为 `/Users/fanluxi/学习`，DeepSeek task root 必须位于该目录内；源码仓库位置与 execution workspace 可以不同。
+Codex 默认在每次 `collab_submit` 中自动携带当前工作区的绝对路径 `execution_workspace`，Controller、worktree 和 driver 均按该次任务目录执行；服务静态配置只作为未提供目录时的回退值。当前安装的回退目录为 `/Users/fanluxi/学习`，源码仓库位置与 execution workspace 可以不同。
 
 ```bash
 # macOS
@@ -76,7 +76,7 @@ Windows 是明确支持目标；当前只完成 macOS 实机验证，**Windows �
 .venv/bin/python -B -m unittest discover -s tests -p 'test_*.py'
 .venv/bin/python tools/configure_macos.py --check
 .venv/bin/python tools/verify_plugin.py \
-  --plugin-root "$HOME/.codex/plugins/cache/collab-local/codex-deepseek-collab/0.27.0" \
+  --plugin-root "$HOME/.codex/plugins/cache/collab-local/codex-deepseek-collab/0.28.0" \
   --output "$HOME/codex-deepseek/runtime/acceptance/plugin-sdk.json"
 ```
 

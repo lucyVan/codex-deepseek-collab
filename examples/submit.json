@@ -1,5 +1,6 @@
 {
   "request_id": "replace-with-a-stable-task-key",
+  "execution_workspace": "/absolute/path/to/current/codex/workspace",
   "root": "replace-with-a-git-repository-under-the-current-workspace",
   "goal": "Describe the authorized implementation and execution task",
   "read_inputs": ["collab/controller.py"],

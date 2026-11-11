@@ -7,6 +7,7 @@
 ```json
 {
   "request_id": "stable-task-key",
+  "execution_workspace": "/absolute/path/to/current/codex/workspace",
   "root": "codex-deepseek-collab",
   "goal": "实现并运行一个明确的小任务",
   "read_inputs": ["collab/controller.py"],
@@ -18,7 +19,7 @@
 }
 ```
 
-`root` 相对 execution workspace，read/write/exclude 路径相对 task root；**root 必须是 git 仓库根**。执行在 execution workspace 的 `.worktrees/<run-id>` 隔离副本中进行，交付标准 git diff/patch；review ACCEPTED 时若主仓库已前进，先 rebase，返回 `REVIEW_BASE_CHANGED`，Codex 重读新 diff 后再 review；冲突返回 `WORKTREE_CONFLICT`，dirty overlap 返回 `WORKTREE_MAIN_DIRTY_CONFLICT`。`exclude_paths` 同时从证据清单和 patch 排除，被排除变化不会应用到主仓库。交付后 worktree 与冻结 patch 不一致时返回 `WORKTREE_CHANGED_AFTER_DELIVERY`，主仓库不变。`dry_run=true` 只校验，不创建 run；非 native 服务只支持 dry-run。
+Codex 默认自动把当前工作区绝对路径填入 `execution_workspace`；未提供时才回退到服务默认值。`root` 相对本次 execution workspace，read/write/exclude 路径相对 task root；**root 必须是 git 仓库根**。执行在 execution workspace 的 `.worktrees/<run-id>` 隔离副本中进行，交付标准 git diff/patch；review ACCEPTED 时若主仓库已前进，先 rebase，返回 `REVIEW_BASE_CHANGED`，Codex 重读新 diff 后再 review；冲突返回 `WORKTREE_CONFLICT`，dirty overlap 返回 `WORKTREE_MAIN_DIRTY_CONFLICT`。`exclude_paths` 同时从证据清单和 patch 排除，被排除变化不会应用到主仓库。交付后 worktree 与冻结 patch 不一致时返回 `WORKTREE_CHANGED_AFTER_DELIVERY`，主仓库不变。`dry_run=true` 只校验，不创建 run；非 native 服务只支持 dry-run。
 
 `collab_submit`/`collab_review` 成功时只返回轻量 run head，不返回完整 spec/result；需要时用 `collab_get`。`request_id` 是持久幂等键，只允许 `[A-Za-z0-9_-]`（不能含点号）；相同输入重试返回原结果，不同输入返回 `IDEMPOTENCY_CONFLICT`；未知结果先查询，不盲目重试。参数校验失败会返回 `INVALID_INPUT`，并在 `field`/`message` 中给出字段级原因。
 

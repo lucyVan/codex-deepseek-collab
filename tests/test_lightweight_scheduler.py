@@ -56,9 +56,10 @@ class LightweightSchedulerTests(unittest.TestCase):
                                    lambda: None, driver_path=self.driver)
         self.addCleanup(self.scheduler.close)
 
-    def submit(self, goal, request_id, user_root=None):
+    def submit(self, goal, request_id, user_root=None, user_workspace=None):
         root = Path(user_root) if user_root else self.workspace
-        spec = {"goal": goal, "root": str(root), "workspace": str(self.workspace),
+        workspace = Path(user_workspace) if user_workspace else self.workspace
+        spec = {"goal": goal, "root": str(root), "workspace": str(workspace),
                 "read_inputs": ["input.txt"], "write_paths": ["out.txt"], "constraints": [],
                 "acceptance": ["driver finishes"], "agent_preset": "collab-worker",
                 "timeout_seconds": 60}
@@ -147,6 +148,24 @@ class LightweightSchedulerTests(unittest.TestCase):
             self.assertFalse(Path(manifest["worktree"]).exists())
         finally:
             git_evidence.cleanup_worktree(self.base / "state/runs" / run["id"])
+
+    def test_run_uses_the_spec_workspace_for_worktree_and_driver(self):
+        caller = self.base / "caller-workspace"
+        caller.mkdir()
+        (caller / "input.txt").write_text("caller\n")
+        git(caller, "init", "-q")
+        git(caller, "config", "user.email", "fixture@example.invalid")
+        git(caller, "config", "user.name", "fixture")
+        git(caller, "add", "input.txt")
+        git(caller, "commit", "-qm", "caller baseline")
+        run = self.submit("copy", "caller-workspace", user_root=caller, user_workspace=caller)
+        final = self.wait_state(run["id"], {"DELIVERED"})
+        manifest = final["result"]["manifest"]
+        self.assertEqual(manifest["root"], str(caller.resolve()))
+        self.assertEqual(Path(manifest["worktree"]).parent, (caller / ".worktrees").resolve())
+        git_evidence.apply_worktree(self.base / "state/runs" / run["id"])
+        self.assertEqual((caller / "out.txt").read_text(), "after\n")
+        self.assertFalse((self.workspace / "out.txt").exists())
 
     def test_cancel_file_reaches_driver_and_cleans_worktree(self):
         run = self.submit("cancel", "cancel-run")

@@ -50,9 +50,12 @@ class Scheduler:
         run_dir = self.root / "runs" / run["id"]
         logs = run_dir / "logs"
         logs.mkdir(exist_ok=True)
+        workspace = Path(run["spec"]["workspace"])
         try:
+            if workspace != self.workspace:
+                git_evidence.cleanup_orphan_worktrees(self.root, workspace)
             base = git_evidence.prepare_worktree(
-                Path(run["spec"]["root"]), run_dir, run["id"], self.workspace)
+                Path(run["spec"]["root"]), run_dir, run["id"], workspace)
             execution_spec = dict(run["spec"])
             execution_spec["root"] = base["worktree"]
             execution_spec["worktree"] = base["worktree"]
@@ -68,7 +71,7 @@ class Scheduler:
         entry = [str(self.driver_path)] if self.driver_path else ["-m", "collab.driver"]
         argv = [sys.executable, "-B", *entry,
                 "--state-root", str(self.root), "--run-id", run["id"],
-                "--workspace", str(self.workspace)]
+                "--workspace", str(run["spec"]["workspace"])]
         job = NativeJob()
         try:
             process = job.start(argv, Path(__file__).resolve().parents[1], os.environ.copy())

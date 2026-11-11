@@ -122,6 +122,27 @@ class LightweightControllerTests(unittest.TestCase):
         self.assertNotIn("evidence_mode", result["spec"])
         self.assertEqual(self.controller.get({})["items"], [])
 
+    def test_submit_uses_the_callers_execution_workspace(self):
+        caller = self.base / "caller-workspace"
+        caller.mkdir()
+        (caller / "input.txt").write_text("caller\n", encoding="utf-8")
+        git(caller, "init", "-q")
+        git(caller, "config", "user.email", "fixture@example.invalid")
+        git(caller, "config", "user.name", "fixture")
+        git(caller, "add", "input.txt")
+        git(caller, "commit", "-qm", "caller baseline")
+        result = self.controller.submit(self.arguments(
+            root=".", execution_workspace=str(caller), dry_run=True))
+        self.assertTrue(result["ready"])
+        self.assertEqual(result["spec"]["workspace"], str(caller.resolve()))
+        self.assertEqual(result["spec"]["root"], str(caller.resolve()))
+        self.assertEqual(self.controller.get({})["items"], [])
+        for name, value in (("missing", self.base / "missing"), ("contains-state", self.base)):
+            with self.subTest(invalid_workspace=name):
+                with self.assertRaises(CollabError) as caught:
+                    self.controller.submit(self.arguments(execution_workspace=str(value), dry_run=True))
+                self.assertEqual(caught.exception.code, "INVALID_WORKSPACE")
+
     def test_submit_wait_diff_and_accept(self):
         submitted = self.controller.submit(self.arguments())
         run_id = submitted["run"]["id"]

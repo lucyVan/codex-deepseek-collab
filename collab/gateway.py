@@ -25,6 +25,7 @@ SCHEMAS = {
     "collab_status": object_schema({}),
     "collab_submit": object_schema({
         "request_id": REQUEST_ID, "root": PATH, "goal": TEXT,
+        "execution_workspace": {"type": "string", "minLength": 1},
         "read_inputs": PATHS, "write_paths": PATHS, "exclude_paths": EXCLUDES,
         "constraints": STRINGS, "acceptance": {**STRINGS, "minItems": 1},
         "timeout_seconds": {"type": "integer", "minimum": 60, "maximum": 86400},
@@ -53,7 +54,7 @@ SCHEMAS = {
 
 DESCRIPTIONS = {
     "collab_status": "Read current service and DeepSeek pairing. No model request or lifecycle action.",
-    "collab_submit": "Validate and submit one DeepSeek desktop task. Task root must be a git repository root; execution uses an isolated worktree and dry_run returns the full spec. DeepSeek delivers implementation and execution evidence; DELIVERED is not Codex acceptance. Requires a stable request_id.",
+    "collab_submit": "Validate and submit one DeepSeek desktop task. Codex supplies the current execution_workspace when available; otherwise the service default is used. Task root must be a git repository root inside that workspace. Execution uses an isolated worktree and dry_run returns the full spec. DELIVERED is not Codex acceptance. Requires a stable request_id.",
     "collab_get": "List runs or read one run: summary (small, default for checks), bounded diff, history, or full result. Does not execute or accept work.",
     "collab_wait": "Wait up to 60 seconds for run.version to exceed after_version. Returns a small run head (id/version/state/summary); use collab_get for details. A timeout only means no newer version; keep waiting and never resubmit.",
     "collab_cancel": "Request cancellation of a queued or running task using a stable request_id and expected run version. ACK is not a terminal state.",

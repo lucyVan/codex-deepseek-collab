@@ -157,7 +157,7 @@ class Controller:
             "id": run["id"], "version": run["version"], "state": run["state"],
             "outcome_unknown": bool(summary.get("outcome_unknown")),
             "spec_summary": {key: spec[key] for key in (
-                "root_relative", "agent_preset", "read_inputs", "write_paths",
+                "root_relative", "workspace", "agent_preset", "read_inputs", "write_paths",
                 "exclude_paths", "timeout_seconds",
             ) if key in spec},
             "manifest_summary": {
@@ -229,15 +229,25 @@ class Controller:
         return configuration
 
     def _spec(self, arguments):
+        workspace_value = arguments.get("execution_workspace")
+        try:
+            workspace = (Path(workspace_value).resolve(strict=True) if workspace_value is not None
+                         else self.workspace)
+        except OSError as error:
+            raise CollabError("INVALID_WORKSPACE", "execution workspace is unavailable") from error
+        if (not workspace.is_dir() or workspace == self.root or workspace in self.root.parents
+                or workspace == Path.home() or workspace == Path(workspace.anchor)):
+            raise CollabError("INVALID_WORKSPACE",
+                              "execution workspace must be a specific directory outside service state")
         root_value = arguments.get("root", ".")
         root_rel = "." if root_value == "." else clean_rel(root_value)
-        root = self.workspace if root_rel == "." else safe_path(self.workspace, root_rel)
+        root = workspace if root_rel == "." else safe_path(workspace, root_rel)
         if not git_evidence.available():
             raise CollabError("GIT_REQUIRED", "git is required for worktree execution")
         if git_evidence.repo_root(Path(root)) != Path(root).resolve():
             raise CollabError("GIT_EVIDENCE_REQUIRED", "task root must be a git repository root")
         root = root.resolve()
-        if not root.is_dir() or (root != self.workspace and self.workspace not in root.parents):
+        if not root.is_dir() or (root != workspace and workspace not in root.parents):
             raise CollabError("INVALID_PATH", "task root must stay inside the execution workspace")
 
         def paths(name):
@@ -275,7 +285,7 @@ class Controller:
         return {
             "goal": arguments["goal"].strip(),
             "root": str(root), "root_relative": root_rel,
-            "workspace": str(self.workspace),
+            "workspace": str(workspace),
             "read_inputs": read_inputs, "write_paths": write_paths,
             "exclude_paths": excludes or (["runtime"] if root_rel == "." else []),
             "constraints": list(arguments.get("constraints", [])),
