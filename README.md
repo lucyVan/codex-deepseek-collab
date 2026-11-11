@@ -54,6 +54,8 @@ Windows 是明确支持目标；当前只完成 macOS 实机验证，**Windows �
 
 配置生成器只在本机写本机配置，不跨平台复制 `.venv`、lock、state、Cookie、token 或日志：
 
+当前安装的 execution workspace 为 `/Users/fanluxi/学习`，DeepSeek task root 必须位于该目录内；源码仓库位置与 execution workspace 可以不同。
+
 ```bash
 # macOS
 .venv/bin/python tools/configure_macos.py --check

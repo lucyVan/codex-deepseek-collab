@@ -22,9 +22,14 @@ class ConfigurationTests(unittest.TestCase):
                 state = connection["args"][connection["args"].index("--state-root") + 1]
                 self.assertIn(state_name, state)
                 self.assertEqual(len(connection["enabled_tools"]), 6)
-        expected, _ = configure_local.configuration(workspace, "darwin")
         actual = json.loads((ROOT / "plugin/.mcp.json").read_text(encoding="utf-8"))
+        actual_connection = actual["mcpServers"]["codex_deepseek_collab"]
+        expected, _ = configure_local.configuration(workspace, "darwin", Path(actual_connection["cwd"]))
         self.assertEqual(actual, expected)
+        custom, _ = configure_local.configuration(workspace, "darwin", workspace / "current-workspace")
+        connection = custom["mcpServers"]["codex_deepseek_collab"]
+        self.assertEqual(connection["cwd"], str((workspace / "current-workspace").resolve()))
+        self.assertEqual(connection["args"][-1], str((workspace / "current-workspace").resolve()))
 
 
 if __name__ == "__main__":

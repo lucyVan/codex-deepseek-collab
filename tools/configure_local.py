@@ -30,10 +30,11 @@ def atomic_json(path: Path, value) -> None:
             os.unlink(temporary)
 
 
-def configuration(workspace_root: Path, platform: str):
+def configuration(workspace_root: Path, platform: str, execution_workspace: Path | None = None):
     if platform not in ("darwin", "win32"):
         raise ValueError("supported configuration platforms are darwin and win32")
     workspace_root = workspace_root.resolve()
+    execution_workspace = (execution_workspace or workspace_root).resolve()
     windows = platform == "win32"
     python = PROJECT_ROOT / (".venv/Scripts/python.exe" if windows else ".venv/bin/python")
     state_name = "windows" if windows else "macos"
@@ -41,8 +42,8 @@ def configuration(workspace_root: Path, platform: str):
     connection = {
         "command": str(python),
         "args": ["-I", "-B", str(PROJECT_ROOT / "tools/mcp_collab.py"),
-                 "--state-root", str(state), "--execution-workspace", str(workspace_root)],
-        "cwd": str(workspace_root),
+                 "--state-root", str(state), "--execution-workspace", str(execution_workspace)],
+        "cwd": str(execution_workspace),
         "startup_timeout_sec": 20,
         "tool_timeout_sec": 120,
         "enabled_tools": TOOLS,
@@ -64,6 +65,7 @@ def configuration(workspace_root: Path, platform: str):
 def main(expected_platform: str | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--workspace-root", type=Path, default=PROJECT_ROOT.parent)
+    parser.add_argument("--execution-workspace", type=Path)
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args()
     platform = expected_platform or sys.platform
@@ -72,7 +74,10 @@ def main(expected_platform: str | None = None) -> int:
     workspace_root = args.workspace_root.resolve()
     if not workspace_root.is_dir():
         parser.error("Workspace root is not an existing directory")
-    mcp, marketplace = configuration(workspace_root, platform)
+    execution_workspace = (args.execution_workspace or workspace_root).resolve()
+    if not execution_workspace.is_dir():
+        parser.error("Execution workspace is not an existing directory")
+    mcp, marketplace = configuration(workspace_root, platform, execution_workspace)
     targets = ((PROJECT_ROOT / "plugin/.mcp.json", mcp),
                (PROJECT_ROOT / ".agents/plugins/marketplace.json", marketplace))
     changed = []
@@ -88,6 +93,7 @@ def main(expected_platform: str | None = None) -> int:
     if not python.is_file():
         parser.error("create the Python 3.12 .venv before configuring the plugin")
     print(json.dumps({"ok": True, "platform": platform, "workspace_root": str(workspace_root),
+                      "execution_workspace": str(execution_workspace),
                       "files": changed, "tool_count": len(TOOLS)}, ensure_ascii=False))
     return 0
 

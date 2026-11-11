@@ -39,13 +39,15 @@ macOS 示例：
 
 ```bash
 STATE="$HOME/codex-deepseek/runtime/macos/state"
-WORKSPACE="$HOME/codex-deepseek"
+WORKSPACE="$HOME/学习"
 .venv/bin/python -B -m collab --state-root "$STATE" --execution-workspace "$WORKSPACE" service start --native
 .venv/bin/python -B -m collab --state-root "$STATE" --execution-workspace "$WORKSPACE" service status
 .venv/bin/python -B -m collab --state-root "$STATE" --execution-workspace "$WORKSPACE" service stop
 ```
 
 Windows 使用对应的 `.venv/Scripts/python.exe` 和 `windows/state`，命令参数相同。
+
+当前安装把 `/Users/fanluxi/学习` 作为 execution workspace。DeepSeek task root 必须位于该目录内，`root` 使用相对它的路径；state 仍独立保存在 `runtime/macos/state`，不与业务文档混放。
 
 stdio bridge 即使 Controller 未运行也暴露 6 个工具。带 `--execution-workspace` 时，业务工具遇到传输不可用会 native 自动启动一次并重试；`collab_status` 不自动启动。desktop 非 CONNECTED 时 status 返回修复步骤，submit 返回 `DESKTOP_NOT_READY`；不会自动重启 App 或配对。
 

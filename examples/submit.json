@@ -1,6 +1,6 @@
 {
   "request_id": "replace-with-a-stable-task-key",
-  "root": "codex-deepseek-collab",
+  "root": "replace-with-a-git-repository-under-the-current-workspace",
   "goal": "Describe the authorized implementation and execution task",
   "read_inputs": ["collab/controller.py"],
   "write_paths": ["collab/controller.py"],
