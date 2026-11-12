@@ -314,10 +314,6 @@ class Controller:
         spec["preset_sha256"] = configuration["preset_sha256"]
         if dry_run:
             return {"ready": True, "spec": spec, "execution_configuration": configuration}
-        for active in self.store.blocking_specs():
-            if active.get("root") == spec["root"]:
-                raise CollabError("ROOT_BUSY",
-                                  "a previous run on this task root is still queued/running/awaiting review")
         try:
             desktop = self.desktop.status()
         except CollabError:
@@ -425,7 +421,9 @@ class Controller:
         return result
 
     def resume(self, arguments):
-        identity = {key: value for key, value in arguments.items() if key != "request_id"}
+        instructions = arguments.get("instructions", "").strip()
+        identity = {"id": arguments["id"], "expected_version": arguments["expected_version"],
+                    "instructions": instructions}
         replay = self.store.replay(arguments["request_id"], "resume", identity)
         if replay is not None:
             if isinstance(replay.get("run"), dict):
@@ -452,7 +450,6 @@ class Controller:
                     datetime.fromisoformat(run["created_at"]) + timedelta(seconds=spec["timeout_seconds"]))
         if deadline.timestamp() <= time.time():
             raise CollabError("TIME_BUDGET_EXCEEDED", "the original task time budget is exhausted")
-        instructions = arguments.get("instructions", "").strip()
         result = self.store.resume(run["id"], arguments["expected_version"], instructions,
                                    arguments["request_id"])
         self.scheduler.kick()

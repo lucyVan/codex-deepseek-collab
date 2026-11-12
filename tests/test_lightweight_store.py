@@ -1,5 +1,7 @@
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 import tempfile
+import threading
 import unittest
 
 from collab.common import CollabError
@@ -68,6 +70,45 @@ class LightweightStoreTests(unittest.TestCase):
         self.assertEqual(listed["items"][0]["id"], run["id"])
         history = self.store.history(run["id"])
         self.assertEqual([item["state"] for item in history], ["RUNNING", "QUEUED"])
+
+    def test_same_root_concurrent_submit_is_atomic(self):
+        barrier = threading.Barrier(2)
+        prepared = []
+
+        def submit(index):
+            barrier.wait(timeout=5)
+            try:
+                return self.store.submit(self.spec, f"concurrent-{index}",
+                                         prepare=prepared.append)["run"]["state"]
+            except CollabError as error:
+                return error.code
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            outcomes = list(pool.map(submit, range(2)))
+        self.assertCountEqual(outcomes, ["QUEUED", "ROOT_BUSY"])
+        self.assertEqual(self.store.counts(), {"QUEUED": 1})
+        self.assertEqual(len(prepared), 1)
+
+    def test_root_lease_tracks_blocking_states_inside_submit(self):
+        run = self.store.submit(self.spec, "lease-first")["run"]
+        for state in ("QUEUED", "RUNNING", "PAUSED", "DELIVERED"):
+            with self.subTest(blocking_state=state):
+                with self.store._db(immediate=True) as db:
+                    db.execute("UPDATE runs SET state=? WHERE id=?", (state, run["id"]))
+                    db.commit()
+                with self.assertRaises(CollabError) as caught:
+                    self.store.submit(self.spec, "lease-next")
+                self.assertEqual(caught.exception.code, "ROOT_BUSY")
+        other = self.store.submit({**self.spec, "root": self.temp.name + "/other"}, "other-root")
+        self.assertEqual(other["run"]["state"], "QUEUED")
+        for state in ("ACCEPTED", "REJECTED", "FAILED", "CANCELLED"):
+            with self.subTest(released_state=state):
+                with self.store._db(immediate=True) as db:
+                    db.execute("UPDATE runs SET state=? WHERE id=?", (state, run["id"]))
+                    db.commit()
+                next_run = self.store.submit(self.spec, "released-" + state)["run"]
+                self.assertEqual(next_run["state"], "QUEUED")
+                run = next_run
 
 
 if __name__ == "__main__":

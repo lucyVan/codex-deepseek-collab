@@ -31,6 +31,8 @@ QUEUED → RUNNING → DELIVERED → ACCEPTED / REJECTED
 
 `PAUSED` 只用于 DSH 因 max output tokens 暂停且仍有余量的情况：保留原 Session 和 worktree，root lease 不释放，不接受部分交付。Codex 检查现场后可用 `collab_resume` 续跑，沿用原 Session、新 prompt request ID 和旧 cursor；总 deadline 不重置，最多续跑 2 次。暂停也可直接拒绝或取消并清理。
 
+root 占用检查与新 run 插入在同一 SQLite 写事务内完成，覆盖 QUEUED/RUNNING/PAUSED/DELIVERED，避免并发提交绕过单 root 排他。续跑按暂停时冻结的 cursor 检查新增输入和本次终态，旧 Controller 消息不算人工接管，旧终态不能替代本次结果；缺少 cursor/事件序号时拒绝续跑。`instructions` 省略时按空串处理，去除首尾空白后统一用于执行及幂等重放。
+
 ## worktree 证据与 apply
 
 - task root 必须是 git 仓库根；worker 从 HEAD 的隔离 worktree 执行，主仓库在 review 前不变。

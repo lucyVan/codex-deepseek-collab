@@ -154,6 +154,12 @@ class Store:
 
     def submit(self, spec, request_id, prepare=None, identity=None):
         def writer(db):
+            # This check and insertion share mutate's BEGIN IMMEDIATE transaction.
+            # A preflight check outside it cannot exclude simultaneous clients.
+            active = db.execute(
+                "SELECT spec FROM runs WHERE state IN ('QUEUED','RUNNING','PAUSED','DELIVERED')")
+            if any(json.loads(row["spec"]).get("root") == spec["root"] for row in active):
+                raise CollabError("ROOT_BUSY", "a previous run still holds this task root")
             run_id = str(uuid4())
             if prepare is not None:
                 prepare(run_id)

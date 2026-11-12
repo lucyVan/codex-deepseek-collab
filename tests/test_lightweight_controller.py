@@ -1,8 +1,10 @@
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 import json
 import shutil
 import subprocess
 import tempfile
+import threading
 import unittest
 from unittest import mock
 
@@ -227,6 +229,26 @@ class LightweightControllerTests(unittest.TestCase):
         second = self.controller.submit(self.arguments(request_id="lease-2"))["run"]
         self.assertEqual(second["state"], "QUEUED")
 
+    def test_simultaneous_submits_cannot_pass_the_same_root_lease(self):
+        barrier = threading.Barrier(2)
+
+        def ready():
+            barrier.wait(timeout=5)
+            return {"state": "CONNECTED"}
+
+        def submit(index):
+            try:
+                return self.controller.submit(self.arguments(request_id=f"race-{index}"))["run"]["state"]
+            except CollabError as error:
+                return error.code
+
+        with mock.patch.object(self.controller.desktop, "status", side_effect=ready):
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                outcomes = list(pool.map(submit, range(2)))
+        self.assertCountEqual(outcomes, ["QUEUED", "ROOT_BUSY"])
+        self.assertEqual(self.controller.store.counts(), {"QUEUED": 1})
+        self.assertEqual(len(list((self.base / "state/runs").iterdir())), 1)
+
     def test_review_requires_re_review_after_main_advance(self):
         run_id, delivered, worktree, run_dir = self.prepare_run("rebase-review")
         (self.workspace / "other.txt").write_text("main advanced\n", encoding="utf-8")
@@ -282,6 +304,25 @@ class LightweightControllerTests(unittest.TestCase):
         with self.assertRaises(CollabError) as caught:
             self.controller.resume({**arguments, "instructions": "different"})
         self.assertEqual(caught.exception.code, "IDEMPOTENCY_CONFLICT")
+
+    def test_resume_replay_normalizes_optional_instructions(self):
+        for index, instructions in enumerate((None, "  continue  ")):
+            with self.subTest(instructions=instructions):
+                run_id, paused, _, _ = self.prepare_paused_run(f"normalization-{index}")
+                arguments = {"request_id": f"normalized-resume-{index}", "id": run_id,
+                             "expected_version": paused["version"]}
+                if instructions is not None:
+                    arguments["instructions"] = instructions
+                public = Gateway(self.controller).handle("collab_resume", arguments)
+                self.assertTrue(public["ok"], public)
+                first = public["result"]
+                for replay_arguments in (arguments, {**arguments, "instructions": (instructions or "").strip()}):
+                    replay = self.controller.resume(replay_arguments)
+                    self.assertTrue(replay["idempotent_replay"])
+                    self.assertEqual(replay["run"], first["run"])
+                self.assertEqual(self.controller.store.get(run_id)["result"]["continuation_count"], 1)
+                self.controller.cancel({"request_id": f"normalized-cancel-{index}", "id": run_id,
+                                        "expected_version": first["run"]["version"]})
 
     def test_paused_run_can_be_rejected_or_cancelled(self):
         first_id, first, _, _ = self.prepare_paused_run("paused-reject")

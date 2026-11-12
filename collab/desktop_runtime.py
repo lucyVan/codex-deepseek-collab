@@ -210,6 +210,23 @@ def _best_effort_unknown(desktop, result, submission):
         pass
 
 
+def _events_after(events, cursor):
+    """Keep only new events; missing sequence evidence cannot establish a boundary."""
+    if type(cursor) is not int or cursor < 0:
+        raise CollabError("RESUME_UNAVAILABLE", "paused Session cursor is unavailable")
+    if not isinstance(events, dict) or not isinstance(events.get("records"), list):
+        raise CollabError("INVALID_DESKTOP_RESPONSE", "Session events are unavailable")
+    records = []
+    for record in events["records"]:
+        event = record.get("event") if isinstance(record, dict) else None
+        seq = event.get("seq") if isinstance(event, dict) else None
+        if type(seq) is not int:
+            raise CollabError("INVALID_DESKTOP_RESPONSE", "Session event sequence is unavailable")
+        if seq > cursor:
+            records.append(record)
+    return {**events, "records": records}
+
+
 def _resume_session(desktop, run, result, workspace):
     resume = run["resume"]
     session_id = resume.get("session_id")
@@ -224,7 +241,8 @@ def _resume_session(desktop, run, result, workspace):
     if not isinstance(permission, str) or permission != resume.get("permission_preset"):
         raise CollabError("DESKTOP_EXECUTION_MISMATCH", "paused Session permission differs from the frozen permission")
     events = desktop.task_events(session_id)
-    analysis = analyze_session_events(events, resume.get("prompt_request_id"))
+    # Earlier turns were verified before PAUSED. Any later user prompt is a takeover.
+    analysis = analyze_session_events(_events_after(events, resume.get("cursor")))
     if analysis["manual_prompt_seqs"]:
         raise CollabError("DESKTOP_MANUAL_TAKEOVER", "paused Session contains a non-controller prompt")
     terminal = _terminal(events)
@@ -384,15 +402,11 @@ def run_desktop(desktop: DesktopPairing, run: dict, prompt: str, logdir: Path,
                 result["events_window"] = _events_window(events)
                 analysis_events = events
                 if resume:
-                    previous_cursor = resume.get("cursor", -1)
-                    analysis_events = {**events, "records": [
-                        record for record in events["records"]
-                        if type((record.get("event") or {}).get("seq")) is int
-                        and record["event"]["seq"] > previous_cursor]}
+                    analysis_events = _events_after(events, resume.get("cursor"))
                 analysis = analyze_session_events(analysis_events, request_id)
                 result["manual_prompt_count"] = len(analysis["manual_prompt_seqs"])
                 result["controller_prompt_seen"] = bool(analysis["controller_prompt_seqs"])
-                terminal = _terminal(events)
+                terminal = _terminal(analysis_events)
                 if terminal is not None:
                     result["terminal_kind"] = terminal["kind"]
                     result["terminal_seq"] = terminal["seq"]

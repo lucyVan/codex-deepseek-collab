@@ -87,11 +87,12 @@ class FakeDesktop:
 
 
 class ResumeDesktop(FakeDesktop):
-    def __init__(self, workspace):
+    def __init__(self, workspace, terminals=("max-tokens", "completed")):
         super().__init__([idle(2)], terminal="max-tokens")
         self.workspace = str(workspace.resolve())
         self.records = []
         self.cursor = 1
+        self.terminals = terminals
 
     def create_task_session(self, cwd, title, agent_preset="standard", preset_sha256=None):
         value = super().create_task_session(cwd, title, agent_preset, preset_sha256)
@@ -104,13 +105,13 @@ class ResumeDesktop(FakeDesktop):
     def prompt_task(self, session_id, text, request_id):
         super().prompt_task(session_id, text, request_id)
         turn = len(self.prompts)
-        user_seq = 1 if turn == 1 else 3
-        end_seq = 2 if turn == 1 else 4
+        user_seq = self.cursor + 1
+        end_seq = user_seq + 1
         self.records.append({"event": {"seq": user_seq, "type": "user/message", "data": {
             "content": [{"type": "text", "text": text}],
             "source": {"kind": "user", "rpcId": request_id},
         }}})
-        kind = "max-tokens" if turn == 1 else "completed"
+        kind = self.terminals[turn - 1]
         self.records.append({"event": {"seq": end_seq, "type": "turn/end",
                                        "data": {"reason": {"kind": kind}}}})
         self.cursor = end_seq
@@ -234,28 +235,97 @@ class DesktopRuntimeTests(unittest.TestCase):
         self.assertGreater(DESKTOP_CONNECTION_TIMEOUT, WAIT_CHUNK_MS / 1000)
 
 
-    def test_max_tokens_resumes_the_same_session_after_the_old_cursor(self):
-        desktop = ResumeDesktop(self.workspace)
+    def test_max_tokens_resumes_twice_in_the_same_session_after_each_old_cursor(self):
+        desktop = ResumeDesktop(self.workspace, ("max-tokens", "max-tokens", "completed"))
         first = self.invoke(desktop)
         self.assertEqual(first["status"], "OUTCOME_UNKNOWN")
         self.assertEqual(first["outcome_reason"], "MAX_OUTPUT_TOKENS")
-        resumed_logs = self.root / "logs/resumed"
-        resumed_logs.mkdir(parents=True)
-        second = run_desktop(desktop, {**self.run, "resume": {
-            "session_id": first["session_id"],
-            "cursor": first["final_state"]["cursor"],
-            "prompt_request_id": first["prompt_request_id"],
-            "permission_preset": first["permission_preset"],
-            "continuation_count": 1,
-        }}, "Continue the task", resumed_logs, threading.Event(),
-            lambda kind, data: self.events.append((kind, data)))
-        self.assertEqual(second["status"], "EXECUTION_COMPLETED")
-        self.assertEqual(second["session_id"], first["session_id"])
-        self.assertEqual(second["continuation_count"], 1)
-        self.assertTrue(second["controller_prompt_seen"])
+        previous = first
+        for count, expected in ((1, "OUTCOME_UNKNOWN"), (2, "EXECUTION_COMPLETED")):
+            resumed_logs = self.root / f"logs/resumed-{count}"
+            resumed_logs.mkdir(parents=True)
+            current = run_desktop(desktop, {**self.run, "resume": {
+                "session_id": previous["session_id"],
+                "cursor": previous["final_state"]["cursor"],
+                "prompt_request_id": previous["prompt_request_id"],
+                "permission_preset": previous["permission_preset"],
+                "continuation_count": count,
+            }}, "Continue the task", resumed_logs, threading.Event(),
+                lambda kind, data: self.events.append((kind, data)))
+            self.assertEqual(current["status"], expected, current)
+            self.assertEqual(current["session_id"], first["session_id"])
+            self.assertEqual(current["continuation_count"], count)
+            self.assertTrue(current["controller_prompt_seen"])
+            self.assertEqual(current["manual_prompt_count"], 0)
+            self.assertGreater(current["terminal_seq"], previous["terminal_seq"])
+            previous = current
         self.assertEqual(len(desktop.created), 1)
-        self.assertEqual(desktop.prompts[-1][2], "desktop-run-desktop-1-resume-1")
-        self.assertEqual(second["terminal_seq"], 4)
+        self.assertEqual(len(desktop.prompts), 3)
+        self.assertEqual(desktop.prompts[-1][2], "desktop-run-desktop-1-resume-2")
+
+    def test_resume_rejects_manual_input_after_the_frozen_cursor(self):
+        desktop = ResumeDesktop(self.workspace)
+        first = self.invoke(desktop)
+        desktop.cursor += 1
+        desktop.records.append({"event": {"seq": desktop.cursor, "type": "user/message", "data": {
+            "source": {"kind": "user", "rpcId": "manual-after-pause"},
+            "content": [{"type": "text", "text": "new human instructions"}],
+        }}})
+        resumed_logs = self.root / "logs/manual-resume"
+        resumed_logs.mkdir(parents=True)
+        result = run_desktop(desktop, {**self.run, "resume": {
+            "session_id": first["session_id"], "cursor": first["final_state"]["cursor"],
+            "prompt_request_id": first["prompt_request_id"],
+            "permission_preset": first["permission_preset"], "continuation_count": 1,
+        }}, "Continue", resumed_logs, threading.Event(), lambda *_: None)
+        self.assertEqual(result["error"], "DESKTOP_MANUAL_TAKEOVER")
+        self.assertEqual(len(desktop.prompts), 1)
+
+    def test_resume_cannot_use_the_previous_turn_terminal_as_its_result(self):
+        desktop = ResumeDesktop(self.workspace)
+        first = self.invoke(desktop)
+        original_prompt = desktop.prompt_task
+
+        def prompt_without_end(session_id, text, request_id):
+            receipt = original_prompt(session_id, text, request_id)
+            desktop.records.pop()  # No terminal for the new turn.
+            desktop.cursor -= 1
+            desktop.waits[0] = idle(desktop.cursor)
+            return receipt
+
+        desktop.prompt_task = prompt_without_end
+        resumed_logs = self.root / "logs/no-new-terminal"
+        resumed_logs.mkdir(parents=True)
+        result = run_desktop(desktop, {**self.run, "resume": {
+            "session_id": first["session_id"], "cursor": first["final_state"]["cursor"],
+            "prompt_request_id": first["prompt_request_id"],
+            "permission_preset": first["permission_preset"], "continuation_count": 1,
+        }}, "Continue", resumed_logs, threading.Event(), lambda *_: None)
+        self.assertEqual(result["outcome_reason"], "MISSING_TERMINAL")
+        self.assertIsNone(result["terminal_kind"])
+
+    def test_resume_rejects_unverifiable_cursor_or_manual_event_sequence(self):
+        for case in ("missing-cursor", "missing-sequence"):
+            with self.subTest(case=case):
+                root = self.root_dir(case)
+                desktop = ResumeDesktop(root / "workspace")
+                first = self.invoke(desktop, root=root)
+                if case == "missing-sequence":
+                    desktop.records.append({"event": {"type": "user/message", "data": {
+                        "source": {"kind": "user", "rpcId": "manual-unsequenced"},
+                    }}})
+                resumed_logs = root / "logs/resume"
+                resumed_logs.mkdir()
+                result = run_desktop(desktop, {**self.run, "root": str(root),
+                    "workspace": str(root / "workspace"), "resume": {
+                        "session_id": first["session_id"],
+                        "cursor": None if case == "missing-cursor" else first["final_state"]["cursor"],
+                        "permission_preset": first["permission_preset"], "continuation_count": 1,
+                    }}, "Continue", resumed_logs, threading.Event(), lambda *_: None)
+                self.assertEqual(result["error"], "RESUME_UNAVAILABLE" if case == "missing-cursor"
+                                 else "INVALID_DESKTOP_RESPONSE")
+                self.assertEqual(len(desktop.prompts), 1)
+
     def test_transport_error_during_wait_is_retried_without_losing_completion(self):
         desktop = FakeDesktop([idle()], terminal="completed")
         original_wait = desktop.wait_task
