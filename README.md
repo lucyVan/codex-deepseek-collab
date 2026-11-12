@@ -1,6 +1,6 @@
 # Codex × DeepSeek 轻量协作（codex-deepseek-collab）
 
-当前源版本为 **0.29.0**，插件 ID 为 `codex-deepseek-collab@collab-local`。DeepSeek 在授权范围内实现、执行、修复和复跑；Codex 独立检查实际差异与执行证据，最终接受或拒绝。
+当前源版本为 **0.30.0**，插件 ID 为 `codex-deepseek-collab@collab-local`。DeepSeek 在授权范围内实现、执行、修复和复跑；Codex 独立检查实际差异与执行证据，最终接受或拒绝。
 
 ## 架构与公开契约
 
@@ -35,7 +35,8 @@ root 占用检查与新 run 插入在同一 SQLite 写事务内完成，覆盖 Q
 
 ## worktree 证据与 apply
 
-- task root 必须是 git 仓库根；worker 从 HEAD 的隔离 worktree 执行，主仓库在 review 前不变。
+- task root 可以是现有 git 仓库根，也可以是无 Git 目录。dry-run 只返回 `git_init_required`；实际提交在无 Git 目录自动 `git init` 并创建安全基线提交，随后从 HEAD 的隔离 worktree 执行。已有仓库的子目录不会被嵌套初始化。
+- 基线包含现有安全文件，确保 worktree 能看到原目录内容；依赖/缓存目录和 credential-like 文件不进入基线，单文件超过 100 MiB、链接或嵌套仓库会明确拒绝。`baseline_head/files/excluded` 记录实际结果。
 - `write_paths` 标出授权范围，越界变化单列；worktree 是隔离与证据机制，不是 OS 安全沙箱。
 - `exclude_paths` 同时从可见 manifest 和最终 patch 排除；这些变化不会在 ACCEPTED 时应用到主仓库。
 - patch 使用原始字节保存，支持二进制和非 UTF-8 内容。
@@ -81,7 +82,7 @@ Codex 默认在每次 `collab_submit` 中自动携带当前工作区的绝对路
 .venv/bin/python -B -m unittest discover -s tests -p 'test_*.py'
 .venv/bin/python tools/configure_macos.py --check
 .venv/bin/python tools/verify_plugin.py \
-  --plugin-root "$HOME/.codex/plugins/cache/collab-local/codex-deepseek-collab/0.29.0" \
+  --plugin-root "$HOME/.codex/plugins/cache/collab-local/codex-deepseek-collab/0.30.0" \
   --output "$HOME/codex-deepseek/runtime/acceptance/plugin-sdk.json"
 ```
 

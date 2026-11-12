@@ -6,16 +6,18 @@ is created under a fixed private cache directory and removed after review.
 from __future__ import annotations
 
 import hashlib
+import os
 import shutil
 import subprocess
 from pathlib import Path
 
 from .common import CollabError, write_bytes, write_json
-from .files import safe_path
+from .files import safe_path, secret_path
 
 
 TIMEOUT = 30
 MAX_DIFF_LINES = 400
+MAX_BASELINE_FILE_BYTES = 100 * 1024 * 1024
 _SKIP_DIRS = {".git", ".hg", ".svn", ".venv", "venv", "node_modules", "__pycache__",
               ".pytest_cache", ".mypy_cache", ".ruff_cache", ".tox", ".nox", ".cache"}
 
@@ -91,6 +93,51 @@ def repo_root(root):
     root = Path(root).resolve()
     top = _toplevel(root)
     return top if top == root else None
+
+
+def initialize_repository(root, excludes=()):
+    """Initialize a repository with a safe baseline so HEAD contains the current task files."""
+    root = Path(root).resolve()
+    if repo_root(root) == root:
+        return {"git_initialized": False, "baseline_head": None,
+                "baseline_files": 0, "baseline_excluded": []}
+    if _toplevel(root) is not None:
+        raise CollabError("GIT_EVIDENCE_REQUIRED",
+                          "task root is inside an existing repository; use the repository root instead")
+    files = []
+    excluded = []
+    for current, directories, names in os.walk(root, followlinks=False):
+        current = Path(current)
+        relative_dir = current.relative_to(root).as_posix()
+        directories[:] = sorted(name for name in directories
+                                if not skipped_dir(f"{relative_dir}/{name}" if relative_dir != "." else name,
+                                                   excludes))
+        for name in sorted(names):
+            path = current / name
+            rel = path.relative_to(root).as_posix()
+            if skipped_dir(rel, excludes):
+                continue
+            if secret_path(rel):
+                excluded.append(rel)
+                continue
+            safe_path(root, rel)
+            size = path.stat().st_size
+            if size > MAX_BASELINE_FILE_BYTES:
+                raise CollabError("GIT_BASELINE_TOO_LARGE",
+                                  f"file exceeds the 100 MiB baseline limit: {rel}")
+            files.append(rel)
+    _git_checked(root, "GIT_BASELINE_FAILED", "cannot initialize the task repository", "init")
+    for offset in range(0, len(files), 100):
+        _git_checked(root, "GIT_BASELINE_FAILED", "cannot stage the baseline files",
+                     "add", "--", *files[offset:offset + 100])
+    _git_checked(root, "GIT_BASELINE_FAILED", "cannot create the baseline commit",
+                 "-c", "user.name=codex-deepseek-collab",
+                 "-c", "user.email=codex-deepseek-collab@local",
+                 "commit", "--allow-empty", "-qm", "Baseline before DeepSeek collaboration")
+    head = _git_checked(root, "GIT_BASELINE_FAILED", "cannot read the baseline HEAD",
+                        "rev-parse", "HEAD").stdout.strip()
+    return {"git_initialized": True, "baseline_head": head,
+            "baseline_files": len(files), "baseline_excluded": excluded[:100]}
 
 
 def ensure_worktree_ignored(workspace):

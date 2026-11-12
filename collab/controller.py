@@ -12,7 +12,7 @@ import sys
 import threading
 import time
 
-from .common import CollabError, write_json
+from .common import CollabError, file_lock, write_json
 from .desktop_pairing import DesktopPairing
 from .desktop_runtime import _outcome, _terminal, session_stopped
 from .driver import prompt_for
@@ -247,11 +247,14 @@ class Controller:
         root = workspace if root_rel == "." else safe_path(workspace, root_rel)
         if not git_evidence.available():
             raise CollabError("GIT_REQUIRED", "git is required for worktree execution")
-        if git_evidence.repo_root(Path(root)) != Path(root).resolve():
-            raise CollabError("GIT_EVIDENCE_REQUIRED", "task root must be a git repository root")
         root = root.resolve()
         if not root.is_dir() or (root != workspace and workspace not in root.parents):
             raise CollabError("INVALID_PATH", "task root must stay inside the execution workspace")
+        repository = git_evidence._toplevel(root)
+        if repository is not None and repository != root:
+            raise CollabError("GIT_EVIDENCE_REQUIRED",
+                              "task root is inside an existing repository; use the repository root instead")
+        git_init_required = repository is None
 
         def paths(name):
             values = arguments.get(name, [])
@@ -289,6 +292,7 @@ class Controller:
             "goal": arguments["goal"].strip(),
             "root": str(root), "root_relative": root_rel,
             "workspace": str(workspace),
+            "git_init_required": git_init_required,
             "read_inputs": read_inputs, "write_paths": write_paths,
             "exclude_paths": excludes or (["runtime"] if root_rel == "." else []),
             "constraints": list(arguments.get("constraints", [])),
@@ -314,6 +318,13 @@ class Controller:
         spec["preset_sha256"] = configuration["preset_sha256"]
         if dry_run:
             return {"ready": True, "spec": spec, "execution_configuration": configuration}
+        if spec["git_init_required"]:
+            with file_lock(self.root / "locks/repositories.lock"):
+                initialization = git_evidence.initialize_repository(
+                    Path(spec["root"]), spec["exclude_paths"])
+            spec.update(initialization)
+        else:
+            spec["git_initialized"] = False
         try:
             desktop = self.desktop.status()
         except CollabError:

@@ -58,7 +58,7 @@ SCHEMAS = {
 
 DESCRIPTIONS = {
     "collab_status": "Read current service and DeepSeek pairing. No model request or lifecycle action.",
-    "collab_submit": "Validate and submit one DeepSeek desktop task. Codex supplies the current execution_workspace when available; otherwise the service default is used. Task root must be a git repository root inside that workspace. Execution uses an isolated worktree and dry_run returns the full spec. DELIVERED is not Codex acceptance. Requires a stable request_id.",
+    "collab_submit": "Validate and submit one DeepSeek desktop task. Codex supplies the current execution_workspace when available; otherwise the service default is used. Task root can be an existing git root or a directory that is safely initialized with a baseline commit. dry_run only reports initialization and never writes .git. Execution uses an isolated worktree and dry_run returns the full spec. DELIVERED is not Codex acceptance. Requires a stable request_id.",
     "collab_get": "List runs or read one run: summary (small, default for checks), bounded diff, history, or full result. Does not execute or accept work.",
     "collab_wait": "Wait up to 60 seconds for run.version to exceed after_version. Returns a small run head (id/version/state/summary); use collab_get for details. A timeout only means no newer version; keep waiting and never resubmit.",
     "collab_resume": "Resume a PAUSED max-tokens run using its original DeepSeek Session and worktree. Uses the original total deadline, a new prompt request ID, and events after the previous cursor. Does not create a new task or accept partial work.",

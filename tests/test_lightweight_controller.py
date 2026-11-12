@@ -161,6 +161,50 @@ class LightweightControllerTests(unittest.TestCase):
                     self.controller.submit(self.arguments(execution_workspace=str(value), dry_run=True))
                 self.assertEqual(caught.exception.code, "INVALID_WORKSPACE")
 
+    def plain_controller(self, name):
+        root = self.base / name
+        root.mkdir()
+        controller = Controller(self.base / (name + "-state"), root, {"instance_id": name},
+                                native_enabled=True, desktop=Desktop(),
+                                scheduler_factory=lambda *args: self.scheduler)
+        self.addCleanup(controller.close)
+        return root, controller
+
+    def test_submit_initializes_git_with_a_safe_baseline(self):
+        root, controller = self.plain_controller("plain-init")
+        (root / "input.txt").write_text("input\n", encoding="utf-8")
+        (root / ".env").write_text("DO_NOT_COMMIT=1\n", encoding="utf-8")
+        (root / ".venv").mkdir()
+        (root / ".venv/dependency.txt").write_text("ignored\n", encoding="utf-8")
+        dry = controller.submit(self.arguments(dry_run=True))
+        self.assertTrue(dry["ready"])
+        self.assertTrue(dry["spec"]["git_init_required"])
+        self.assertFalse((root / ".git").exists())
+        submitted = controller.submit(self.arguments(request_id="plain-init-submit"))
+        self.assertEqual(submitted["run"]["state"], "QUEUED")
+        stored = controller.store.get(submitted["run"]["id"])["spec"]
+        self.assertTrue(stored["git_initialized"])
+        self.assertEqual(stored["baseline_files"], 1)
+        self.assertEqual(stored["baseline_excluded"], [".env"])
+        tracked = git(root, "ls-files").stdout.splitlines()
+        self.assertEqual(tracked, ["input.txt"])
+        self.assertEqual((root / ".env").read_text(encoding="utf-8"), "DO_NOT_COMMIT=1\n")
+        self.assertEqual(git(root, "log", "-1", "--pretty=%s").stdout.strip(),
+                         "Baseline before DeepSeek collaboration")
+        run_dir = self.base / "plain-init-state/runs" / submitted["run"]["id"]
+        base = git_evidence.prepare_worktree(root, run_dir, submitted["run"]["id"], self.base)
+        self.assertTrue((Path(base["worktree"]) / "input.txt").is_file())
+        git_evidence.cleanup_worktree(run_dir)
+
+    def test_baseline_rejects_large_file_before_creating_git(self):
+        root, controller = self.plain_controller("plain-large")
+        (root / "input.txt").write_text("input exceeds test limit\n", encoding="utf-8")
+        with mock.patch("collab.git_evidence.MAX_BASELINE_FILE_BYTES", 10):
+            with self.assertRaises(CollabError) as caught:
+                controller.submit(self.arguments(request_id="plain-large-submit"))
+        self.assertEqual(caught.exception.code, "GIT_BASELINE_TOO_LARGE")
+        self.assertFalse((root / ".git").exists())
+
     def test_submit_wait_diff_and_accept(self):
         submitted = self.controller.submit(self.arguments())
         run_id = submitted["run"]["id"]
@@ -206,6 +250,7 @@ class LightweightControllerTests(unittest.TestCase):
         with self.assertRaises(CollabError) as caught:
             self.controller.submit(self.arguments(root="plain", dry_run=True))
         self.assertEqual(caught.exception.code, "GIT_EVIDENCE_REQUIRED")
+        self.assertFalse((plain / ".git").exists())
 
     def test_desktop_not_ready_is_reported_before_submit(self):
         down = Controller(self.base / "down-state", self.workspace, {"instance_id": "down"},

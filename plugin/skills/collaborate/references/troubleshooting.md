@@ -4,8 +4,11 @@
 |---|---|
 | `SERVICE_UNAVAILABLE` | Controller 未运行或注册失效；先 start 服务，必要时看 logs |
 | `INVALID_INPUT` | 看错误里的 `field`/`message`：常见是 `request_id` 含点号、enum 非法、字段超长 |
-| `GIT_REQUIRED` / `GIT_EVIDENCE_REQUIRED` | 未安装 git，或 task root 不是 git 仓库根；安装 git / 选择仓库根后重试 |
-| `ROOT_BUSY` | 同 task root 还有 QUEUED/RUNNING/DELIVERED run；先 review/cancel 再提交 |
+| `GIT_REQUIRED` | 未安装 git；安装后重试 |
+| `GIT_EVIDENCE_REQUIRED` | task root 位于已有仓库的子目录；选择仓库根，不自动创建嵌套仓库 |
+| `GIT_BASELINE_TOO_LARGE` | 单文件超过 100 MiB；缩小范围或排除大文件，不在线初始化基线 |
+| `GIT_BASELINE_FAILED` | 自动初始化或基线提交失败；检查 hooks、权限、已有 `.git` 和磁盘状态 |
+| `ROOT_BUSY` | 同 task root 还有 QUEUED/RUNNING/PAUSED/DELIVERED run；先 review/cancel 再提交 |
 | `DESKTOP_NOT_READY` | DSH Desktop 未连接；看 `collab_status` 的 `desktop.repair.command`，重启 App 后重新 pair |
 | `REVIEW_BASE_CHANGED` | 主仓库已前进；worktree 已 rebase，未 apply；重新读 diff 后再 review |
 | `WORKTREE_CONFLICT` | worktree rebase 到新 HEAD 有冲突；不自动解决，worktree 保留，Codex 人工处理或重做 |

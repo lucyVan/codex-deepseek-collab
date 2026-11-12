@@ -51,4 +51,4 @@ Windows 使用对应的 `.venv/Scripts/python.exe` 和 `windows/state`，命令�
 
 stdio bridge 即使 Controller 未运行也暴露 7 个工具。带 `--execution-workspace` 时，业务工具遇到传输不可用会 native 自动启动一次并重试；`collab_status` 不自动启动。desktop 非 CONNECTED 时 status 返回修复步骤，submit 返回 `DESKTOP_NOT_READY`；不会自动重启 App 或配对。
 
-每个 run 在 execution workspace 的 `.worktrees/<run-id>` 中执行，ACCEPTED 后才 apply 到主仓库。`.worktrees/` 自动加入所在 git 仓库的 `.git/info/exclude`。`/v1/health`、`/v1/stop` 仅用于私有生命周期，任务不经过自定义 `/v1/command`。
+无 Git 目录在实际 submit 时自动初始化并创建安全基线提交，dry-run 不写 `.git`；已有仓库子目录不会被嵌套初始化。每个 run 在 execution workspace 的 `.worktrees/<run-id>` 中执行，ACCEPTED 后才 apply 到主仓库。`.worktrees/` 自动加入所在 git 仓库的 `.git/info/exclude`。`/v1/health`、`/v1/stop` 仅用于私有生命周期，任务不经过自定义 `/v1/command`。
