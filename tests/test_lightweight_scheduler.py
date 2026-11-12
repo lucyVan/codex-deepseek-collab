@@ -20,6 +20,14 @@ if s['goal']=='sleep':
     time.sleep(.4)
     (Path(s['root'])/'out.txt').write_text('after\n')
     result={'status':'EXECUTION_COMPLETED','error':None}
+elif s['goal']=='pause':
+    (Path(s['root'])/'out.txt').write_text('after\n')
+    if s.get('resume'):
+        result={'status':'EXECUTION_COMPLETED','error':None}
+    else:
+        result={'status':'OUTCOME_UNKNOWN','outcome_reason':'MAX_OUTPUT_TOKENS','partial':True,
+                'session_id':'fake-session','permission_preset':'danger-full-access',
+                'prompt_request_id':'desktop-fake','final_state':{'cursor':7}}
 elif s['goal']=='cancel':
     deadline=time.monotonic()+10
     while not (r/'cancel.requested').exists() and time.monotonic()<deadline: time.sleep(.05)
@@ -181,6 +189,22 @@ class LightweightSchedulerTests(unittest.TestCase):
         while time.monotonic() < deadline and Path(base["worktree"]).exists():
             time.sleep(.05)
         self.assertFalse(Path(base["worktree"]).exists())
+
+    def test_paused_run_resumes_the_same_worktree(self):
+        run = self.submit("pause", "pause-run")
+        paused = self.wait_state(run["id"], {"PAUSED"})
+        manifest = paused["result"]["manifest"]
+        worktree = Path(manifest["worktree"])
+        self.assertTrue(worktree.is_dir())
+        self.assertFalse((self.workspace / "out.txt").exists())
+        resumed = self.store.resume(run["id"], paused["version"], "continue", "pause-resume")
+        self.assertEqual(resumed["run"]["state"], "QUEUED")
+        self.scheduler.kick()
+        final = self.wait_state(run["id"], {"DELIVERED"})
+        self.assertEqual(final["result"]["continuation_count"], 1)
+        self.assertEqual(final["result"]["manifest"]["worktree"], str(worktree))
+        git_evidence.apply_worktree(self.base / "state/runs" / run["id"])
+        self.assertEqual((self.workspace / "out.txt").read_text(), "after\n")
 
 
 if __name__ == "__main__":

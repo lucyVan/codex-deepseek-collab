@@ -362,6 +362,28 @@ def _rebase_worktree(worktree, base, new_head, run_dir, excludes):
     return base
 
 
+def assert_worktree_unchanged(run_dir):
+    """Fail closed if a delivered or paused worktree no longer matches its frozen patch."""
+    import json
+    run_dir = Path(run_dir).resolve()
+    base = read_worktree(run_dir)
+    if base is None:
+        raise CollabError("GIT_WORKTREE_FAILED", "worktree baseline is unavailable")
+    worktree = Path(base["worktree"])
+    patch = run_dir / "worktree.patch"
+    if not worktree.is_dir() or not patch.is_file():
+        raise CollabError("GIT_WORKTREE_FAILED", "worktree or its patch is unavailable")
+    try:
+        delivery = json.loads((run_dir / "delivery-manifest.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        delivery = {}
+    _stage_all(worktree)
+    current_patch = _render_patch(worktree, base["head"], delivery.get("exclude_paths", []))
+    if current_patch != patch.read_bytes():
+        raise CollabError("WORKTREE_CHANGED_AFTER_DELIVERY",
+                          "worktree changed after delivery; deliver and review it again")
+
+
 def apply_worktree(run_dir, *, cleanup=True):
     """Validate and apply a worktree patch.
 
@@ -387,11 +409,7 @@ def apply_worktree(run_dir, *, cleanup=True):
     excludes = delivery.get("exclude_paths", [])
     worktree = Path(base["worktree"])
     if worktree.is_dir():
-        _stage_all(worktree)
-        current_patch = _render_patch(worktree, base["head"], excludes)
-        if current_patch != patch.read_bytes():
-            raise CollabError("WORKTREE_CHANGED_AFTER_DELIVERY",
-                              "worktree changed after delivery; deliver and review it again")
+        assert_worktree_unchanged(run_dir)
     head = _git(main, "rev-parse", "HEAD")
     if head.returncode != 0:
         raise CollabError("GIT_UNAVAILABLE", "main repository HEAD is unavailable")

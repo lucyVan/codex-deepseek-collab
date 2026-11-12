@@ -42,6 +42,10 @@ SCHEMAS = {
         "id": ID, "after_version": {"type": "integer", "minimum": 0},
         "max_seconds": {"type": "integer", "minimum": 1, "maximum": 60},
     }, ("id", "after_version")),
+    "collab_resume": object_schema({
+        "request_id": REQUEST_ID, "id": ID, "expected_version": VERSION,
+        "instructions": TEXT,
+    }, ("request_id", "id", "expected_version")),
     "collab_cancel": object_schema({
         "request_id": REQUEST_ID, "id": ID, "expected_version": VERSION,
     }, ("request_id", "id", "expected_version")),
@@ -57,8 +61,9 @@ DESCRIPTIONS = {
     "collab_submit": "Validate and submit one DeepSeek desktop task. Codex supplies the current execution_workspace when available; otherwise the service default is used. Task root must be a git repository root inside that workspace. Execution uses an isolated worktree and dry_run returns the full spec. DELIVERED is not Codex acceptance. Requires a stable request_id.",
     "collab_get": "List runs or read one run: summary (small, default for checks), bounded diff, history, or full result. Does not execute or accept work.",
     "collab_wait": "Wait up to 60 seconds for run.version to exceed after_version. Returns a small run head (id/version/state/summary); use collab_get for details. A timeout only means no newer version; keep waiting and never resubmit.",
-    "collab_cancel": "Request cancellation of a queued or running task using a stable request_id and expected run version. ACK is not a terminal state.",
-    "collab_review": "Codex independently accepts or rejects a DELIVERED run. Returns a small run head plus the review record. Record concrete checks; model output, ACK and process exit are not acceptance.",
+    "collab_resume": "Resume a PAUSED max-tokens run using its original DeepSeek Session and worktree. Uses the original total deadline, a new prompt request ID, and events after the previous cursor. Does not create a new task or accept partial work.",
+    "collab_cancel": "Request cancellation of a queued, running, or paused task using a stable request_id and expected run version. ACK is not a terminal state.",
+    "collab_review": "Codex independently accepts a DELIVERED run or rejects a DELIVERED/PAUSED run. Returns a small run head plus the review record. Partial paused work cannot be accepted.",
 }
 READ_ONLY = {"collab_status", "collab_get", "collab_wait"}
 VALIDATORS = {name: Draft202012Validator(schema) for name, schema in SCHEMAS.items()}
@@ -83,6 +88,8 @@ class Gateway:
                 result = self.controller.get(arguments)
             elif name == "collab_wait":
                 result = self.controller.wait(arguments)
+            elif name == "collab_resume":
+                result = self.controller.resume(arguments)
             elif name == "collab_cancel":
                 result = self.controller.cancel(arguments)
             else:

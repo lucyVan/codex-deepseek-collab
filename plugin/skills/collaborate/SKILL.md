@@ -5,7 +5,7 @@ description: 仅在用户明确指定 DeepSeek 时派发本机任务；DeepSeek 
 
 # Codex × DeepSeek 轻量协作
 
-使用 codex_deepseek_collab 的 6 个 MCP 工具。只有用户明确指定交给 DeepSeek 才能实际 submit；选择插件、读取技能、查看状态或 Codex 判断适合协作都不构成授权。沿用本轮已有明确授权，不重复询问。
+使用 codex_deepseek_collab 的 7 个 MCP 工具。只有用户明确指定交给 DeepSeek 才能实际 submit；选择插件、读取技能、查看状态或 Codex 判断适合协作都不构成授权。沿用本轮已有明确授权，不重复询问。
 
 ## 当前职责
 
@@ -16,7 +16,7 @@ description: 仅在用户明确指定 DeepSeek 时派发本机任务；DeepSeek 
 
 Codex 自己的工作直接在主会话或原生子 Agent 中执行，不需要创建 collab run。
 
-## 6 个工具
+## 7 个工具
 
 | 工具 | 何时使用 |
 |---|---|
@@ -24,10 +24,11 @@ Codex 自己的工作直接在主会话或原生子 Agent 中执行，不需要�
 | `collab_submit` | 校验并提交；`dry_run=true` 只校验 |
 | `collab_get` | 查 run：`view="summary"` 轻量概览（先看这个）、`result` 全量、分页 diff、history；结果顶层有 `outcome_unknown` |
 | `collab_wait` | 按 `id + after_version` 最长等待 60 秒；返回轻量 run head（id/version/state/summary） |
-| `collab_cancel` | 取消 queued/running 任务并继续确认终态 |
+| `collab_resume` | max-tokens 进入 PAUSED 后，用原 Session/worktree 续跑；传新 request_id 和当前 version，可附 instructions |
+| `collab_cancel` | 取消 queued/running/paused 任务并继续确认终态 |
 | `collab_review` | Codex 对 DELIVERED 结果接受或拒绝 |
 
-没有独立的 preflight、collect、verify、handoff 或 feedback 工具。提交内部完成基本检查；diff 在 get 中；Codex 复验在 Codex 会话或新的只读任务中完成；重做通过新任务完成，不关联旧 run 状态。
+没有独立的 preflight、collect、verify、handoff 或 feedback 工具；`collab_resume` 只负责 max-tokens 暂停后的同 Session 续跑。提交内部完成基本检查；diff 在 get 中；Codex 复验在 Codex 会话或新的只读任务中完成；重做通过新任务完成，不关联旧 run 状态。
 
 ## 日常流程
 
@@ -42,11 +43,13 @@ Codex 自己的工作直接在主会话或原生子 Agent 中执行，不需要�
 
 ```text
 QUEUED → RUNNING → DELIVERED → ACCEPTED / REJECTED
+                    ├→ PAUSED → QUEUED → RUNNING → DELIVERED
                     ├→ FAILED
                     └→ CANCELLED
 ```
 
 - `DELIVERED` 不是最终验收。
+- `PAUSED` 只表示 max-tokens 暂停，不是最终交付；原 Session/worktree 和 root lease 保留，部分 patch 不得 apply。`collab_resume` 传 `id + expected_version + 新 request_id`，可附 instructions；续跑使用原 Session、新 prompt request ID 和旧 cursor，总 deadline 不重置，最多 2 次。也可直接 REJECTED 或 cancel 清理。
 - 拒绝后需要 DeepSeek 重做时，创建新任务；没有自动 repair/handoff 状态机，也不继承旧 run 的执行状态。
 - running 取消只发送请求，必须继续 wait 到 CANCELLED/FAILED 等真实终态。
 - `REQUEST_OUTCOME_UNKNOWN` 或断连后先按 request_id/run ID 查询，不换 key 重派。

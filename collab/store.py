@@ -184,14 +184,19 @@ class Store:
             if current["state"] != "RUNNING":
                 raise CollabError("INVALID_STATE", "only a running driver can finish")
             native_status = delivery.get("status")
+            paused = native_status == "OUTCOME_UNKNOWN" and delivery.get("outcome_reason") == "MAX_OUTPUT_TOKENS"
             state = "DELIVERED" if native_status == "EXECUTION_COMPLETED" else (
-                "CANCELLED" if native_status == "CANCELLED" or current["cancel_requested"] else "FAILED")
+                "PAUSED" if paused else (
+                    "CANCELLED" if native_status == "CANCELLED" or current["cancel_requested"] else "FAILED"))
+            previous_result = current.get("result") or {}
             result = {
                 "summary": {
                     "native_status": native_status,
                     "error": delivery.get("error"),
                     "outcome_reason": delivery.get("outcome_reason"),
                     "outcome_unknown": native_status == "OUTCOME_UNKNOWN",
+                    "partial": bool(delivery.get("partial")),
+                    "continuation_count": previous_result.get("continuation_count", 0),
                     "changed_files": len(manifest["changes"]),
                     "out_of_scope_files": len(manifest["out_of_scope"]),
                     "main_changed": bool(manifest.get("main_changed")),
@@ -199,6 +204,7 @@ class Store:
                 },
                 "delivery": delivery,
                 "manifest": manifest,
+                "continuation_count": previous_result.get("continuation_count", 0),
             }
             version = current["version"] + 1
             db.execute("UPDATE runs SET version=?,state=?,result=?,updated_at=? WHERE id=?",
@@ -213,12 +219,12 @@ class Store:
             current = self._get_db(db, run_id)
             if current["version"] != expected_version:
                 raise CollabError("VERSION_CONFLICT", "run version differs")
-            if current["state"] == "QUEUED":
+            if current["state"] in ("QUEUED", "PAUSED"):
                 version = current["version"] + 1
                 result = {"summary": {"native_status": "CANCELLED", "error": "CANCEL_REQUESTED"}}
                 db.execute("UPDATE runs SET version=?,state='CANCELLED',result=?,updated_at=? WHERE id=?",
                            (version, canonical(result).decode("utf-8"), now(), run_id))
-                self._history(db, run_id, version, "CANCELLED", "cancelled before start")
+                self._history(db, run_id, version, "CANCELLED", "cancelled before start or while paused")
             elif current["state"] == "RUNNING":
                 version = current["version"] + 1
                 db.execute("UPDATE runs SET version=?,cancel_requested=1,updated_at=? WHERE id=?",
@@ -229,6 +235,39 @@ class Store:
             return {"run": self._get_db(db, run_id)}
         return self.mutate(request_id, "cancel", arguments, writer)
 
+    def resume(self, run_id, expected_version, instructions, request_id):
+        arguments = {"id": run_id, "expected_version": expected_version, "instructions": instructions}
+        def writer(db):
+            current = self._get_db(db, run_id)
+            if current["version"] != expected_version:
+                raise CollabError("VERSION_CONFLICT", "run version differs")
+            if current["state"] != "PAUSED":
+                raise CollabError("INVALID_STATE", "only a paused run can be resumed")
+            result = current.get("result") or {}
+            delivery = result.get("delivery") or {}
+            manifest = result.get("manifest") or {}
+            continuation_count = result.get("continuation_count", 0) + 1
+            result["continuation_count"] = continuation_count
+            result["summary"] = {"native_status": "RESUMING", "error": None,
+                                 "outcome_reason": None, "outcome_unknown": False,
+                                 "continuation_count": continuation_count}
+            spec = current["spec"]
+            spec["resume"] = {
+                "session_id": delivery.get("session_id"),
+                "cursor": (delivery.get("final_state") or {}).get("cursor"),
+                "prompt_request_id": delivery.get("prompt_request_id"),
+                "permission_preset": delivery.get("permission_preset"),
+                "worktree": manifest.get("worktree"),
+                "instructions": instructions,
+                "continuation_count": continuation_count,
+            }
+            version = current["version"] + 1
+            db.execute("UPDATE runs SET version=?,state='QUEUED',spec=?,result=?,cancel_requested=0,updated_at=? WHERE id=?",
+                       (version, canonical(spec).decode("utf-8"), canonical(result).decode("utf-8"), now(), run_id))
+            self._history(db, run_id, version, "QUEUED", "resume requested")
+            return {"run": self._get_db(db, run_id)}
+        return self.mutate(request_id, "resume", arguments, writer)
+
     def review(self, run_id, expected_version, conclusion, summary, checks, current_changes, request_id):
         arguments = {"id": run_id, "expected_version": expected_version, "conclusion": conclusion,
                      "summary": summary, "checks": checks}
@@ -236,8 +275,8 @@ class Store:
             current = self._get_db(db, run_id)
             if current["version"] != expected_version:
                 raise CollabError("VERSION_CONFLICT", "run version differs")
-            if current["state"] != "DELIVERED":
-                raise CollabError("INVALID_STATE", "only a delivered run can be reviewed")
+            if current["state"] != "DELIVERED" and not (current["state"] == "PAUSED" and conclusion == "REJECTED"):
+                raise CollabError("INVALID_STATE", "only a delivered run can be accepted; a paused run can only be rejected")
             review = {"reviewer": "codex", "conclusion": conclusion, "summary": summary,
                       "checks": checks, "current_changes": current_changes, "created_at": now()}
             version = current["version"] + 1
@@ -254,7 +293,7 @@ class Store:
 
     def blocking_specs(self):
         with self._db() as db:
-            rows = db.execute("SELECT spec FROM runs WHERE state IN ('QUEUED','RUNNING','DELIVERED')").fetchall()
+            rows = db.execute("SELECT spec FROM runs WHERE state IN ('QUEUED','RUNNING','PAUSED','DELIVERED')").fetchall()
             return [json.loads(row["spec"]) for row in rows]
 
     def running_runs(self):

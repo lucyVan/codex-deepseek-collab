@@ -210,10 +210,37 @@ def _best_effort_unknown(desktop, result, submission):
         pass
 
 
+def _resume_session(desktop, run, result, workspace):
+    resume = run["resume"]
+    session_id = resume.get("session_id")
+    if not isinstance(session_id, str) or not session_id:
+        raise CollabError("RESUME_UNAVAILABLE", "paused Session is unavailable")
+    metadata = desktop.task_metadata(session_id)
+    observed = metadata.get("workingDirectory")
+    if (not isinstance(observed, str)
+            or os.path.normcase(os.path.abspath(observed)) != os.path.normcase(os.path.abspath(workspace))):
+        raise CollabError("DESKTOP_WORKSPACE_MISMATCH", "paused Session working directory differs from the frozen workspace")
+    permission = metadata.get("permissions", {}).get("currentValue")
+    if not isinstance(permission, str) or permission != resume.get("permission_preset"):
+        raise CollabError("DESKTOP_EXECUTION_MISMATCH", "paused Session permission differs from the frozen permission")
+    events = desktop.task_events(session_id)
+    analysis = analyze_session_events(events, resume.get("prompt_request_id"))
+    if analysis["manual_prompt_seqs"]:
+        raise CollabError("DESKTOP_MANUAL_TAKEOVER", "paused Session contains a non-controller prompt")
+    terminal = _terminal(events)
+    if terminal is None or terminal["kind"] != "max-tokens":
+        raise CollabError("RESUME_UNAVAILABLE", "paused Session does not end at max output tokens")
+    result.update(session_id=session_id,
+                  session_title=metadata.get("title") if isinstance(metadata.get("title"), str) else None,
+                  permission_preset=permission)
+    return session_id
+
+
 def run_desktop(desktop: DesktopPairing, run: dict, prompt: str, logdir: Path,
                 cancel, emit) -> dict:
     """Run one official Session and return only execution-relevant evidence."""
     started = time.monotonic()
+    resume = run.get("resume")
     result = {
         "status": "FAILED",
         "session_id": None,
@@ -243,11 +270,15 @@ def run_desktop(desktop: DesktopPairing, run: dict, prompt: str, logdir: Path,
         "events_window": None,
         "post_unknown_state": None,
         "post_unknown_terminal": None,
+        "continuation_count": resume.get("continuation_count", 0) if resume else 0,
     }
     root = Path(run["root"]).resolve()
     logdir = Path(logdir).resolve()
     workspace = Path(run["workspace"]).resolve()
-    deadline = started + run.get("timeout_seconds", 1800)
+    deadline_value = run.get("deadline_at")
+    remaining_budget = (max(0.0, datetime.fromisoformat(deadline_value).timestamp() - time.time())
+                        if deadline_value else run.get("timeout_seconds", 1800))
+    deadline = started + remaining_budget
     submission = "NOT_SENT"
     claimed = False
     cancel_sent = False
@@ -269,26 +300,34 @@ def run_desktop(desktop: DesktopPairing, run: dict, prompt: str, logdir: Path,
         result["prompt_sha256"] = hashlib.sha256(prompt_bytes).hexdigest()
         claimed = True
         title = f'collab {run["task_id"][:8]} / {run["id"][:8]}'
-        created = desktop.create_task_session(
-            workspace, title, agent_preset=result["agent_preset"],
-            preset_sha256=run.get("preset_sha256"))
-        configuration = created.get("execution_configuration", {})
-        result.update(
-            session_id=created["session_id"], session_title=created.get("title"),
-            preset_sha256=configuration.get("preset_sha256"),
-            permission_preset=configuration.get("permission_preset"),
-        )
-        session_id = created["session_id"]
-        emit("desktop.session.created", {"session_id": session_id, "title": created.get("title")})
+        if resume:
+            result["preset_sha256"] = run.get("preset_sha256")
+            session_id = _resume_session(desktop, run, result, workspace)
+            emit("desktop.session.resumed", {"session_id": session_id})
+        else:
+            created = desktop.create_task_session(
+                workspace, title, agent_preset=result["agent_preset"],
+                preset_sha256=run.get("preset_sha256"))
+            configuration = created.get("execution_configuration", {})
+            result.update(
+                session_id=created["session_id"], session_title=created.get("title"),
+                preset_sha256=configuration.get("preset_sha256"),
+                permission_preset=configuration.get("permission_preset"),
+            )
+            session_id = created["session_id"]
+            emit("desktop.session.created", {"session_id": session_id, "title": created.get("title")})
         state = desktop.task_state(session_id)
         if not isinstance(state, dict) or state.get("running") is not False:
             raise CollabError("DESKTOP_SESSION_BUSY", "new desktop Session is not idle before prompt")
-        cursor = state.get("cursor") if type(state.get("cursor")) is int else -1
+        if resume and not session_stopped(state):
+            raise CollabError("DESKTOP_SESSION_BUSY", "paused Session has queued or pending input")
+        cursor = state.get("cursor") if type(state.get("cursor")) is int else resume.get("cursor", -1) if resume else -1
         if cancel.is_set():
             result.update(status="CANCELLED", outcome_reason="CANCEL_REQUESTED",
                           error="CANCEL_REQUESTED", session_idle=True)
             return result
-        request_id = "desktop-" + run["id"]
+        request_id = ("desktop-" + run["id"] if not resume else
+                      f"desktop-{run['id']}-resume-{resume.get('continuation_count', 1)}")
         result["prompt_request_id"] = request_id
         submission = "SENT_RECEIPT_PENDING"
         emit("prompt.sending", {"request_id": request_id})
@@ -343,7 +382,14 @@ def run_desktop(desktop: DesktopPairing, run: dict, prompt: str, logdir: Path,
             if state.get("running") is False:
                 events = desktop.task_events(session_id, through_seq=state.get("cursor"))
                 result["events_window"] = _events_window(events)
-                analysis = analyze_session_events(events, request_id)
+                analysis_events = events
+                if resume:
+                    previous_cursor = resume.get("cursor", -1)
+                    analysis_events = {**events, "records": [
+                        record for record in events["records"]
+                        if type((record.get("event") or {}).get("seq")) is int
+                        and record["event"]["seq"] > previous_cursor]}
+                analysis = analyze_session_events(analysis_events, request_id)
                 result["manual_prompt_count"] = len(analysis["manual_prompt_seqs"])
                 result["controller_prompt_seen"] = bool(analysis["controller_prompt_seqs"])
                 terminal = _terminal(events)

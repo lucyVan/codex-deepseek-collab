@@ -49,3 +49,18 @@ write_paths 外变化单独列出；manifest 会带 `root` 与 `excluded`。`col
 只有 DELIVERED 可以 review。传当前 run.version 作为 expected_version，结论为 ACCEPTED 或 REJECTED，并填写 summary 与 checks。同一 task root 仍有 RUNNING run 时返回 `RUN_BUSY`。Codex 应核对实际文件、执行结果和验收条件；需要独立复跑时在 Codex 会话中执行，或另行派发只读 DeepSeek 任务。
 
 拒绝后如需重做，创建新任务，不自动修复或恢复旧 DSH Session。
+
+## max-tokens 暂停与续跑
+
+DSH 因 max output tokens 暂停时，run 进入 `PAUSED`，保留 Session、worktree 和 root lease；这不是 DELIVERED，不能 ACCEPTED/apply。先用 `collab_get(view="summary")` 和必要的 diff 检查部分结果，再调用：
+
+```json
+{
+  "request_id": "resume-long-task-001",
+  "id": "原 run ID",
+  "expected_version": 3,
+  "instructions": "继续完成剩余实现，并重新运行尚未通过的测试"
+}
+```
+
+续跑回到 `QUEUED`，再由 Scheduler claim 为 `RUNNING`：使用原 `session_id`、新 prompt request ID 和旧 cursor，不新建 Session、不重复完整历史。原 goal、write_paths、acceptance、execution_workspace 和绝对 deadline 保持不变，最多续跑 2 次。旧终态不会被当成本次完成。若现场不可信、超过续跑上限或预算耗尽，应 REJECTED 或 cancel 并清理。

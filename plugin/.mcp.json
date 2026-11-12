@@ -19,6 +19,7 @@
         "collab_submit",
         "collab_get",
         "collab_wait",
+        "collab_resume",
         "collab_cancel",
         "collab_review"
       ]

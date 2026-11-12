@@ -1,6 +1,6 @@
 # Codex × DeepSeek 轻量协作（codex-deepseek-collab）
 
-当前源版本为 **0.28.0**，插件 ID 为 `codex-deepseek-collab@collab-local`。DeepSeek 在授权范围内实现、执行、修复和复跑；Codex 独立检查实际差异与执行证据，最终接受或拒绝。
+当前源版本为 **0.29.0**，插件 ID 为 `codex-deepseek-collab@collab-local`。DeepSeek 在授权范围内实现、执行、修复和复跑；Codex 独立检查实际差异与执行证据，最终接受或拒绝。
 
 ## 架构与公开契约
 
@@ -9,7 +9,7 @@ Codex / 其他受信 MCP client
   │ stdio（bridge 无业务逻辑）或 Streamable HTTP
   ▼
 单例常驻 MCP Controller
-  ├── 6 个工具、参数校验、request 幂等
+  ├── 7 个工具、参数校验、request 幂等
   ├── run.version、精简 SQLite、同 root lease
   ├── 不同 root 最多 2 个 driver 并发
   └── HEAD worktree → manifest/patch → Codex review → apply
@@ -18,15 +18,18 @@ Codex / 其他受信 MCP client
                 DeepSeek Harness App
 ```
 
-工具只有：`collab_status`、`collab_submit`、`collab_get`、`collab_wait`、`collab_cancel`、`collab_review`。
+工具只有：`collab_status`、`collab_submit`、`collab_get`、`collab_wait`、`collab_resume`、`collab_cancel`、`collab_review`。
 
 ```text
 QUEUED → RUNNING → DELIVERED → ACCEPTED / REJECTED
+                    ├→ PAUSED → QUEUED（collab_resume）→ RUNNING → DELIVERED
                     ├→ FAILED
                     └→ CANCELLED
 ```
 
 `DELIVERED` 不是验收。没有 candidate/formal、三门禁、自动 repair/handoff 或独立 verifier/researcher preset。Controller、幂等、取消、进程组清理和最终 review 是必要能力，不为减法删除。
+
+`PAUSED` 只用于 DSH 因 max output tokens 暂停且仍有余量的情况：保留原 Session 和 worktree，root lease 不释放，不接受部分交付。Codex 检查现场后可用 `collab_resume` 续跑，沿用原 Session、新 prompt request ID 和旧 cursor；总 deadline 不重置，最多续跑 2 次。暂停也可直接拒绝或取消并清理。
 
 ## worktree 证据与 apply
 
@@ -76,7 +79,7 @@ Codex 默认在每次 `collab_submit` 中自动携带当前工作区的绝对路
 .venv/bin/python -B -m unittest discover -s tests -p 'test_*.py'
 .venv/bin/python tools/configure_macos.py --check
 .venv/bin/python tools/verify_plugin.py \
-  --plugin-root "$HOME/.codex/plugins/cache/collab-local/codex-deepseek-collab/0.28.0" \
+  --plugin-root "$HOME/.codex/plugins/cache/collab-local/codex-deepseek-collab/0.29.0" \
   --output "$HOME/codex-deepseek/runtime/acceptance/plugin-sdk.json"
 ```
 

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from datetime import datetime, timedelta, timezone
 import json
 import os
 import shlex
@@ -23,6 +24,7 @@ from .store import Store
 
 
 WORKER_PRESET = "collab-worker"
+MAX_CONTINUATIONS = 2
 
 
 class Controller:
@@ -139,6 +141,7 @@ class Controller:
             "id": run["id"], "version": run["version"], "state": run["state"],
             "summary": {key: summary[key] for key in (
                 "native_status", "error", "outcome_reason", "outcome_unknown",
+                "partial", "continuation_count",
                 "changed_files", "out_of_scope_files", "main_changed", "main_changes",
             ) if key in summary},
         }
@@ -292,6 +295,7 @@ class Controller:
             "acceptance": list(arguments["acceptance"]),
             "agent_preset": WORKER_PRESET,
             "timeout_seconds": timeout,
+            "deadline_at": (datetime.now(timezone.utc) + timedelta(seconds=timeout)).isoformat(),
         }
 
     def submit(self, arguments):
@@ -407,10 +411,51 @@ class Controller:
                 self.condition.wait(min(remaining, 1.0))
 
     def cancel(self, arguments):
+        before = self.store.get(arguments["id"])
         result = self.store.cancel(arguments["id"], arguments["expected_version"], arguments["request_id"])
         run = result["run"]
         if run["cancel_requested"] and run["state"] == "RUNNING":
             (self.root / "runs" / run["id"] / "cancel.requested").touch()
+        if run["state"] == "CANCELLED":
+            manifest = (before.get("result") or {}).get("manifest") or {}
+            if manifest.get("evidence_mode") == "worktree":
+                git_evidence.cleanup_worktree(self.root / "runs" / run["id"])
+        self._changed()
+        result["run"] = self._run_head(result["run"])
+        return result
+
+    def resume(self, arguments):
+        identity = {key: value for key, value in arguments.items() if key != "request_id"}
+        replay = self.store.replay(arguments["request_id"], "resume", identity)
+        if replay is not None:
+            if isinstance(replay.get("run"), dict):
+                replay["run"] = self._run_head(replay["run"])
+            return replay
+        if self.scheduler is None:
+            raise CollabError("NATIVE_DISABLED", "resume requires native execution")
+        run = self.store.get(arguments["id"])
+        if run["version"] != arguments["expected_version"]:
+            raise CollabError("VERSION_CONFLICT", "run version differs")
+        if run["state"] != "PAUSED":
+            raise CollabError("INVALID_STATE", "only a paused run can be resumed")
+        result = run.get("result") or {}
+        if result.get("continuation_count", 0) >= MAX_CONTINUATIONS:
+            raise CollabError("CONTINUATION_LIMIT", "maximum continuation count reached")
+        delivery = result.get("delivery") or {}
+        if delivery.get("outcome_reason") != "MAX_OUTPUT_TOKENS":
+            raise CollabError("INVALID_STATE", "only a max-tokens pause can be resumed")
+        run_dir = self.root / "runs" / run["id"]
+        git_evidence.assert_worktree_unchanged(run_dir)
+        spec = run["spec"]
+        deadline_value = spec.get("deadline_at")
+        deadline = (datetime.fromisoformat(deadline_value) if deadline_value else
+                    datetime.fromisoformat(run["created_at"]) + timedelta(seconds=spec["timeout_seconds"]))
+        if deadline.timestamp() <= time.time():
+            raise CollabError("TIME_BUDGET_EXCEEDED", "the original task time budget is exhausted")
+        instructions = arguments.get("instructions", "").strip()
+        result = self.store.resume(run["id"], arguments["expected_version"], instructions,
+                                   arguments["request_id"])
+        self.scheduler.kick()
         self._changed()
         result["run"] = self._run_head(result["run"])
         return result
@@ -436,6 +481,8 @@ class Controller:
         manifest = (run.get("result") or {}).get("manifest") or {}
         run_dir = self.root / "runs" / arguments["id"]
         worktree_mode = manifest.get("evidence_mode") == "worktree"
+        if worktree_mode and arguments["conclusion"] == "ACCEPTED" and run.get("state") != "DELIVERED":
+            raise CollabError("INVALID_STATE", "only a delivered run can be accepted")
         if worktree_mode and arguments["conclusion"] == "ACCEPTED":
             if run.get("state") != "DELIVERED" or run.get("version") != arguments["expected_version"]:
                 raise CollabError("VERSION_CONFLICT", "run changed before worktree apply")

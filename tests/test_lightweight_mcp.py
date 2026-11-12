@@ -14,7 +14,7 @@ from collab.service_state import load_registration
 
 
 PROJECT = Path(__file__).resolve().parents[1]
-EXPECTED = {"collab_status", "collab_submit", "collab_get", "collab_wait", "collab_cancel", "collab_review"}
+EXPECTED = {"collab_status", "collab_submit", "collab_get", "collab_wait", "collab_resume", "collab_cancel", "collab_review"}
 
 
 class LightweightMCPTests(unittest.TestCase):

@@ -21,7 +21,7 @@ class ConfigurationTests(unittest.TestCase):
                 self.assertTrue(connection["command"].endswith(python_suffix))
                 state = connection["args"][connection["args"].index("--state-root") + 1]
                 self.assertIn(state_name, state)
-                self.assertEqual(len(connection["enabled_tools"]), 6)
+                self.assertEqual(len(connection["enabled_tools"]), 7)
         actual = json.loads((ROOT / "plugin/.mcp.json").read_text(encoding="utf-8"))
         actual_connection = actual["mcpServers"]["codex_deepseek_collab"]
         expected, _ = configure_local.configuration(workspace, "darwin", Path(actual_connection["cwd"]))

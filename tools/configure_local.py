@@ -10,7 +10,7 @@ import tempfile
 
 TOOLS = [
     "collab_status", "collab_submit", "collab_get",
-    "collab_wait", "collab_cancel", "collab_review",
+    "collab_wait", "collab_resume", "collab_cancel", "collab_review",
 ]
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 

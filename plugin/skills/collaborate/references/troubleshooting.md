@@ -18,6 +18,9 @@
 | `IDEMPOTENCY_CONFLICT` | 同一 request_id 输入不同；查原 run，使用新 key 表示真正的新任务 |
 | `REQUEST_OUTCOME_UNKNOWN` | 先按 request_id/run 查询，不自动重发 |
 | `VERSION_CONFLICT` | 重新读取 run.version，确认正在操作同一代结果 |
+| `PAUSED` / `MAX_OUTPUT_TOKENS` | 保留 Session/worktree；先检查部分结果，再用 collab_resume 同 Session 续跑，或直接拒绝/取消。不要接受部分 patch |
+| `CONTINUATION_LIMIT` | 已达到最多 2 次续跑；检查剩余工作并改用小任务，不继续盲目续跑 |
+| `RESUME_UNAVAILABLE` | 原 Session、cwd、权限、worktree 或上一次 max-tokens 终态不可确认；不要创建同名新 Session 冒充恢复 |
 | `MISSING_INPUT` | 检查 root 与 read_inputs，不先提交再补输入 |
 | `RUN_BUSY` | 同一 task root 还有 RUNNING run；等它到终态再 review |
 | `LIMIT` | 缩小 task root、文件范围或 diff 分页 |

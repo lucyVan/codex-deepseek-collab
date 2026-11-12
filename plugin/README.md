@@ -1,10 +1,10 @@
-# Codex × DeepSeek 轻量协作 0.28.0
+# Codex × DeepSeek 轻量协作 0.29.0
 
 仅在用户明确指定 DeepSeek 时派发。DeepSeek 负责授权范围内的实现、执行、修复和复跑；Codex 独立检查实际差异与执行证据，最终接受或拒绝。
 
 ## 当前结构
 
-- 单例常驻 MCP Controller，提供 `collab_status`、`collab_submit`、`collab_get`、`collab_wait`、`collab_cancel`、`collab_review`。
+- 单例常驻 MCP Controller，提供 `collab_status`、`collab_submit`、`collab_get`、`collab_wait`、`collab_resume`、`collab_cancel`、`collab_review`。
 - stdio bridge 只转发 MCP；其他受信 client 可连接同一 MCP URL。
 - 不同 task root 最多 2 个 driver 并发，同 root 由 lease 串行。
 - 固定 `collab-worker`，没有 verifier/researcher、多阶段门禁或自动 repair/handoff。
@@ -13,6 +13,7 @@
 
 ```text
 QUEUED → RUNNING → DELIVERED → ACCEPTED / REJECTED
+                    ├→ PAUSED → QUEUED（collab_resume）→ RUNNING → DELIVERED
                     ├→ FAILED
                     └→ CANCELLED
 ```
@@ -24,6 +25,7 @@ Codex 默认自动携带当前工作区 `execution_workspace`；未提供时才�
 - main HEAD 前进需要 rebase 后重新 review；冲突与证据缺失 fail closed。
 - worktree 清理后 `after_matches_current=null`，`current_changes.available=false`。
 - request_id 只允许 `[A-Za-z0-9_-]`；等待沿 run.version，取消 ACK 不是终态。
+- max-tokens 进入 `PAUSED` 时保留原 Session 和 worktree。`collab_resume` 使用新 request_id 和当前 run.version 续跑，不重发完整历史、不重置总 deadline，最多 2 次；暂停不接受 apply，可拒绝或取消。
 
 ## macOS 与 Windows
 

@@ -1,4 +1,4 @@
-"""Check the installed six-tool plugin via official MCP stdio, without model dispatch."""
+"""Check the installed seven-tool plugin via official MCP stdio, without model dispatch."""
 from __future__ import annotations
 
 import argparse
@@ -11,7 +11,7 @@ from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 
 
-EXPECTED = {"collab_status", "collab_submit", "collab_get", "collab_wait", "collab_cancel", "collab_review"}
+EXPECTED = {"collab_status", "collab_submit", "collab_get", "collab_wait", "collab_resume", "collab_cancel", "collab_review"}
 
 
 async def verify(root: Path):

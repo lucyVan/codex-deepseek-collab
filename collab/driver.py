@@ -40,6 +40,25 @@ Rules:
 """
 
 
+def resume_prompt_for(spec):
+    instructions = spec["resume"].get("instructions") or "Complete the remaining requirements and rerun relevant checks."
+    return f"""Continue the existing task from the current worktree. Do not restart or expand its scope.
+Review the partial changes, preserve the original write_paths and constraints, and do not claim acceptance.
+The previous turn stopped at max output tokens. Continue from the existing context and finish with actual evidence.
+
+Additional continuation instructions:
+{instructions}
+"""
+
+
+def log_directory(run_dir, spec):
+    directory = run_dir / "logs"
+    if spec.get("resume"):
+        directory = directory / f"resume-{spec['resume'].get('continuation_count', 1)}"
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("--state-root", required=True, type=Path)
@@ -81,10 +100,13 @@ def main(argv=None):
         "agent_preset": spec["agent_preset"],
         "preset_sha256": spec.get("preset_sha256"),
         "timeout_seconds": spec["timeout_seconds"],
+        "deadline_at": spec.get("deadline_at"),
+        "resume": spec.get("resume"),
     }
     desktop = DesktopPairing(root)
     try:
-        result = run_desktop(desktop, run, prompt_for(spec), run_dir / "logs", cancel, emit)
+        prompt = resume_prompt_for(spec) if spec.get("resume") else prompt_for(spec)
+        result = run_desktop(desktop, run, prompt, log_directory(run_dir, spec), cancel, emit)
     except CollabError as error:
         result = {"status": "FAILED", "error": error.code, "outcome_reason": error.code}
     except Exception:

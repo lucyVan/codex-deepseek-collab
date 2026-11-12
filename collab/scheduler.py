@@ -52,10 +52,15 @@ class Scheduler:
         logs.mkdir(exist_ok=True)
         workspace = Path(run["spec"]["workspace"])
         try:
-            if workspace != self.workspace:
-                git_evidence.cleanup_orphan_worktrees(self.root, workspace)
-            base = git_evidence.prepare_worktree(
-                Path(run["spec"]["root"]), run_dir, run["id"], workspace)
+            if run["spec"].get("resume"):
+                base = git_evidence.read_worktree(run_dir)
+                if base is None or not Path(base["worktree"]).is_dir():
+                    raise CollabError("RESUME_UNAVAILABLE", "paused worktree is unavailable")
+            else:
+                if workspace != self.workspace:
+                    git_evidence.cleanup_orphan_worktrees(self.root, workspace)
+                base = git_evidence.prepare_worktree(
+                    Path(run["spec"]["root"]), run_dir, run["id"], workspace)
             execution_spec = dict(run["spec"])
             execution_spec["root"] = base["worktree"]
             execution_spec["worktree"] = base["worktree"]
@@ -75,8 +80,10 @@ class Scheduler:
         job = NativeJob()
         try:
             process = job.start(argv, Path(__file__).resolve().parents[1], os.environ.copy())
-            stdout = (run_dir / "logs" / "driver.stdout.log").open("w", encoding="utf-8")
-            stderr = (run_dir / "logs" / "driver.stderr.log").open("w", encoding="utf-8")
+            resume = run["spec"].get("resume")
+            suffix = f"-resume-{resume.get('continuation_count', 1)}" if resume else ""
+            stdout = (run_dir / "logs" / f"driver{suffix}.stdout.log").open("w", encoding="utf-8")
+            stderr = (run_dir / "logs" / f"driver{suffix}.stderr.log").open("w", encoding="utf-8")
             threads = [
                 threading.Thread(target=self._drain, args=(process.stdout, stdout), daemon=True),
                 threading.Thread(target=self._drain, args=(process.stderr, stderr), daemon=True),
@@ -121,7 +128,7 @@ class Scheduler:
             delivery = {**delivery, "status": "FAILED", "error": code,
                         "outcome_reason": "RESULT_MANIFEST_FAILED"}
         finished = self.store.finish(run["id"], delivery, manifest)
-        if (run_dir / "worktree-base.json").is_file() and finished.get("state") != "DELIVERED":
+        if (run_dir / "worktree-base.json").is_file() and finished.get("state") not in ("DELIVERED", "PAUSED"):
             git_evidence.cleanup_worktree(run_dir)
         self.notify()
 

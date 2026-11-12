@@ -24,7 +24,7 @@ from .service_state import load_registration
 
 
 INSTRUCTIONS = (
-    "Lightweight DeepSeek task distribution: submit → wait → inspect delivered changes → Codex accepts or rejects. "
+    "Lightweight DeepSeek task distribution: submit → wait → resume paused work if needed → inspect delivered changes → Codex accepts or rejects. "
     "DELIVERED, ACK and process exit are not acceptance. request_id values are stable idempotency keys; "
     "after REQUEST_OUTCOME_UNKNOWN inspect the existing run instead of resubmitting. wait uses run.version and never cancels the run."
 )

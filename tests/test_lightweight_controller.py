@@ -100,6 +100,22 @@ class LightweightControllerTests(unittest.TestCase):
             run["id"], {"status": "EXECUTION_COMPLETED"}, manifest)
         return run["id"], delivered, worktree, run_dir
 
+    def prepare_paused_run(self, request_id="paused-1"):
+        run = self.controller.submit(self.arguments(request_id=request_id))["run"]
+        self.controller.store.claim_next()
+        run_dir = self.base / "state/runs" / run["id"]
+        base = git_evidence.prepare_worktree(self.workspace, run_dir, run["id"], self.base)
+        worktree = Path(base["worktree"])
+        (worktree / "out.txt").write_text("partial\n", encoding="utf-8")
+        manifest = git_evidence.deliver_worktree(run_dir, ["out.txt"])
+        paused = self.controller.store.finish(run["id"], {
+            "status": "OUTCOME_UNKNOWN", "outcome_reason": "MAX_OUTPUT_TOKENS", "partial": True,
+            "session_id": "paused-session", "permission_preset": "danger-full-access",
+            "prompt_request_id": "desktop-paused", "final_state": {"cursor": 9},
+        }, manifest)
+        self.addCleanup(git_evidence.cleanup_worktree, run_dir)
+        return run["id"], paused, worktree, run_dir
+
     def test_invalid_submissions_are_rejected_before_execution(self):
         gateway = Gateway(self.controller)
         missing = gateway.handle("collab_submit", {})
@@ -242,6 +258,79 @@ class LightweightControllerTests(unittest.TestCase):
                                     "expected_version": 2, "conclusion": "ACCEPTED",
                                     "summary": "blocked", "checks": ["none"]})
         self.assertEqual(caught.exception.code, "RUN_BUSY")
+
+    def test_paused_resume_is_idempotent_and_keeps_root_lease(self):
+        run_id, paused, worktree, run_dir = self.prepare_paused_run()
+        with self.assertRaises(CollabError) as caught:
+            self.controller.review({"request_id": "paused-accept", "id": run_id,
+                                    "expected_version": paused["version"], "conclusion": "ACCEPTED",
+                                    "summary": "must not accept", "checks": ["partial only"]})
+        self.assertEqual(caught.exception.code, "INVALID_STATE")
+        with self.assertRaises(CollabError) as caught:
+            self.controller.submit(self.arguments(request_id="paused-other-submit"))
+        self.assertEqual(caught.exception.code, "ROOT_BUSY")
+        arguments = {"request_id": "resume-1", "id": run_id,
+                     "expected_version": paused["version"], "instructions": "continue"}
+        public = Gateway(self.controller).handle("collab_resume", arguments)
+        self.assertTrue(public["ok"])
+        resumed = public["result"]
+        self.assertEqual(resumed["run"]["state"], "QUEUED")
+        self.assertEqual(self.scheduler.kicks, 2)
+        replay = self.controller.resume(arguments)
+        self.assertTrue(replay["idempotent_replay"])
+        self.assertEqual(self.scheduler.kicks, 2)
+        with self.assertRaises(CollabError) as caught:
+            self.controller.resume({**arguments, "instructions": "different"})
+        self.assertEqual(caught.exception.code, "IDEMPOTENCY_CONFLICT")
+
+    def test_paused_run_can_be_rejected_or_cancelled(self):
+        first_id, first, _, _ = self.prepare_paused_run("paused-reject")
+        rejected = self.controller.review({"request_id": "paused-reject-review", "id": first_id,
+                                           "expected_version": first["version"], "conclusion": "REJECTED",
+                                           "summary": "discard partial work", "checks": ["not complete"]})
+        self.assertEqual(rejected["run"]["state"], "REJECTED")
+        second_id, second, _, second_dir = self.prepare_paused_run("paused-cancel")
+        manifest = self.controller.store.get(second_id)["result"]["manifest"]
+        cancelled = self.controller.cancel({"request_id": "paused-cancel-request", "id": second_id,
+                                            "expected_version": second["version"]})
+        self.assertEqual(cancelled["run"]["state"], "CANCELLED")
+        self.assertFalse(Path(manifest["worktree"]).exists())
+
+    def test_resume_rejects_worktree_changed_after_pause(self):
+        run_id, paused, worktree, _ = self.prepare_paused_run("paused-changed")
+        (worktree / "out.txt").write_text("external-change\n", encoding="utf-8")
+        with self.assertRaises(CollabError) as caught:
+            self.controller.resume({"request_id": "changed-resume", "id": run_id,
+                                    "expected_version": paused["version"]})
+        self.assertEqual(caught.exception.code, "WORKTREE_CHANGED_AFTER_DELIVERY")
+        self.assertEqual(self.controller.store.get(run_id)["state"], "PAUSED")
+
+    def test_resume_count_and_original_deadline_are_bounded(self):
+        run_id, paused, worktree, run_dir = self.prepare_paused_run("paused-limits")
+        for index in range(2):
+            resumed = self.controller.resume({"request_id": f"resume-limit-{index}", "id": run_id,
+                                              "expected_version": paused["version"]})
+            self.assertEqual(resumed["run"]["state"], "QUEUED")
+            self.controller.store.claim_next()
+            paused = self.controller.store.finish(run_id, {
+                "status": "OUTCOME_UNKNOWN", "outcome_reason": "MAX_OUTPUT_TOKENS", "partial": True,
+                "session_id": "paused-session", "permission_preset": "danger-full-access",
+                "prompt_request_id": f"desktop-paused-{index}", "final_state": {"cursor": 10 + index},
+            }, paused["result"]["manifest"])
+        with self.assertRaises(CollabError) as caught:
+            self.controller.resume({"request_id": "resume-over-limit", "id": run_id,
+                                    "expected_version": paused["version"]})
+        self.assertEqual(caught.exception.code, "CONTINUATION_LIMIT")
+        self.controller.review({"request_id": "resume-limit-reject", "id": run_id,
+                                "expected_version": paused["version"], "conclusion": "REJECTED",
+                                "summary": "stop after continuation limit", "checks": ["limit reached"]})
+        second_id, second, _, _ = self.prepare_paused_run("paused-expired")
+        with mock.patch("collab.controller.time.time", return_value=4_000_000_000):
+            with self.assertRaises(CollabError) as caught:
+                self.controller.resume({"request_id": "resume-expired", "id": second_id,
+                                        "expected_version": second["version"]})
+        self.assertEqual(caught.exception.code, "TIME_BUDGET_EXCEEDED")
+        self.assertEqual(self.controller.store.get(second_id)["state"], "PAUSED")
 
     def test_cancel_queued_and_nonnative_rejection(self):
         run = self.controller.submit(self.arguments())["run"]
