@@ -33,7 +33,7 @@ Codex 自己的工作直接在主会话或原生子 Agent 中执行，不需要�
 ## 日常流程
 
 1. 调用 `collab_status`。native 未启动时先按 environment.md 启动服务；纯检查不提交任务。
-2. 明确 goal、task root（现有 git 仓库根或无 Git 目录）、read_inputs、write_paths、constraints、acceptance 和 timeout。**Codex 默认从当前会话环境读取当前工作区的绝对路径，并自动填入 `execution_workspace`，不要求用户手工配置，也不使用源码目录或历史工作区代替。** 只有无法确认当前目录或用户显式指定其他目录时，才省略该字段并回退到服务默认值。`root` 相对本次 execution workspace，其他读写路径相对 task root。`exclude_paths`（相对 task root，最多 100 个）同时排除可见 manifest 和最终 patch，被排除的变化不会在 ACCEPTED 时落盘。git 是必备依赖；无 Git 目录在实际 submit 时自动 `git init` 并创建包含现有安全文件的基线提交，再执行 HEAD worktree。dry-run 只报告 `git_init_required`，不写 `.git`。已有仓库子目录、超过 100 MiB 的单文件、链接或 credential-like 文件不会被自动纳入基线。
+2. 明确 goal、task root（现有 git 仓库根、已有仓库的子目录，或无 Git 目录）、read_inputs、write_paths、constraints、acceptance 和 timeout。**Codex 默认从当前会话环境读取当前工作区的绝对路径，并自动填入 `execution_workspace`，不要求用户手工配置，也不使用源码目录或历史工作区代替。** 只有无法确认当前目录或用户显式指定其他目录时，才省略该字段并回退到服务默认值。`root` 相对本次 execution workspace，其他读写路径相对 task root。`exclude_paths`（相对 task root，最多 100 个）同时排除可见 manifest 和最终 patch，被排除的变化不会在 ACCEPTED 时落盘。git 是必备依赖；无 Git 目录在实际 submit 时自动 `git init` 并创建包含现有安全文件的基线提交，再执行 HEAD worktree。dry-run 只报告 `git_init_required`，不写 `.git`。已有仓库子目录复用父仓库的 `repository_root`，以 `task_root_relative` 限定 worker 和 patch；子目录外修改返回 `TASK_ROOT_OUT_OF_SCOPE`。无 Git 目录才自动初始化；超过 100 MiB 的单文件、链接或 credential-like 文件不会被自动纳入基线。
 3. 需要时先 `collab_submit(dry_run=true)`。实际提交使用稳定 request_id；`request_id` 只能包含字母、数字、`_`、`-`（不能有点号），相同 request_id 只能用于相同输入。同一 task root 还有 QUEUED/RUNNING/DELIVERED run 时提交返回 `ROOT_BUSY`：先 review/cancel 前一个 run。
 4. 保存 run ID 和当前 version，用 `collab_wait(after_version=...)` 等待。它只返回轻量 run head（id/version/state/summary）；需要细节时再 get，别让每次等待都携带完整 manifest。没有独立工作时持续等待，不提前结束回合。
 5. 到 `DELIVERED` 后先 `collab_get(view="summary")` 看状态与 manifest 计数；需要 spec/delivery/完整 manifest 时才用 `view="result"`；用 `view=diff` 分页查看差异，必要时 `current=true` 核对交付后变化；`view=diff` 与 `current=true` 不能同时使用。`after_matches_current=false` 表示交付后变化，此时 ACCEPTED 会返回 `WORKTREE_CHANGED_AFTER_DELIVERY` 且主仓库不变；worktree 清理后该值为 null、reason 为 `WORKTREE_CLEANED_UP`，不是匹配证明。DeepSeek 自报完成、ACK 和进程退出都不是验收。
@@ -57,7 +57,7 @@ QUEUED → RUNNING → DELIVERED → ACCEPTED / REJECTED
 
 ## 差异与范围
 
-Controller 不复制完整项目树。git 是必备依赖；task root 可以是现有仓库根或无 Git 目录，无 Git 时实际 submit 自动创建安全基线提交。执行在 execution workspace 下的 `.worktrees/<run-id>` 中（如 `~/codex-deepseek/.worktrees/<run-id>`），主仓库在 review 前不变。交付报告 worktree 内新增/删除/修改与 write_paths 外变化，并生成 `worktree.patch`；ACCEPTED 后 apply 到主仓库，REJECTED 删除 worktree。
+Controller 不复制完整项目树。git 是必备依赖；task root 可以是现有仓库根、已有仓库的子目录，或无 Git 目录；子目录复用父仓库并限定 task_root_relative，无 Git 时实际 submit 自动创建安全基线提交。执行在 execution workspace 下的 `.worktrees/<run-id>` 中（如 `~/codex-deepseek/.worktrees/<run-id>`），主仓库在 review 前不变。交付报告 worktree 内新增/删除/修改与 write_paths 外变化，并生成 `worktree.patch`；ACCEPTED 后 apply 到主仓库，REJECTED 删除 worktree。
 
 worktree 交付带 `worktree.patch`；review ACCEPTED 时如果主仓库 HEAD/工作区已变化，先在 worktree 内 rebase/三方合并到新 HEAD：无冲突则 apply，冲突则返回 `WORKTREE_CONFLICT` 并保留 worktree，不做自动冲突解决；主仓库有未提交改动且与任务路径重叠时返回 `WORKTREE_MAIN_DIRTY_CONFLICT`。REJECTED 时删除 worktree。主仓库原有的未提交改动不会进入 worktree；worker 只看 HEAD。git diff/manifest 不能替代 Codex 审查。共享目录仍要求同一任务范围单写者；交付后再次变化会记录在 current_changes 中，由 Codex 决定是否重新检查。
 

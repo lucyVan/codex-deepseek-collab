@@ -31,15 +31,23 @@ def skipped_dir(rel, excludes=()):
     return False
 
 
-def _patch_pathspecs(excludes):
+def _patch_pathspecs(excludes, task_relative="."):
     """Use the same exclusions for the apply patch and the visible manifest."""
-    specs = ["."]
+    specs = [task_relative]
+    prefix = "" if task_relative == "." else task_relative.rstrip("/") + "/"
     for name in sorted(_SKIP_DIRS):
         specs.extend((f":(exclude){name}/**", f":(exclude)**/{name}/**"))
     for exclude in excludes:
         normalized = exclude.rstrip("/")
-        specs.extend((f":(exclude){normalized}", f":(exclude){normalized}/**"))
+        specs.extend((f":(exclude){prefix}{normalized}", f":(exclude){prefix}{normalized}/**"))
     return specs
+
+
+def _task_path(path, task_relative):
+    if task_relative == ".":
+        return path
+    prefix = task_relative.rstrip("/") + "/"
+    return path[len(prefix):] if path.startswith(prefix) else None
 
 
 def in_scope(rel, write_paths):
@@ -70,10 +78,10 @@ def _stage_all(worktree):
     _git_checked(worktree, "GIT_WORKTREE_FAILED", "cannot stage worktree changes", "add", "-A", ".")
 
 
-def _render_patch(worktree, head, excludes):
+def _render_patch(worktree, head, excludes, task_relative="."):
     result = _git_checked(worktree, "GIT_WORKTREE_FAILED", "cannot render worktree patch",
                           "diff", "--cached", "--binary", head, "--",
-                          *_patch_pathspecs(excludes), binary=True)
+                          *_patch_pathspecs(excludes, task_relative), binary=True)
     return result.stdout
 
 
@@ -241,7 +249,7 @@ def worktree_path(run_id, workspace):
     return path
 
 
-def prepare_worktree(root, run_dir, run_id, workspace):
+def prepare_worktree(root, run_dir, run_id, workspace, task_root_relative="."):
     """Create an isolated worktree at HEAD; return its base record."""
     root, run_dir = Path(root).resolve(), Path(run_dir).resolve()
     if repo_root(root) != root:
@@ -261,6 +269,7 @@ def prepare_worktree(root, run_dir, run_id, workspace):
         raise CollabError("GIT_WORKTREE_FAILED", "cannot create git worktree")
     base = {"mode": "worktree", "main_root": str(root), "worktree": str(path),
             "worktree_base": str(path.parent), "head": head.stdout.strip(),
+            "task_root_relative": task_root_relative,
             "main_status": sorted([list(item) for item in _status_entries(root)])}
     write_json(run_dir / "worktree-base.json", base)
     return base
@@ -281,19 +290,25 @@ def deliver_worktree(run_dir, write_paths, *, excludes=()):
     if base is None:
         raise CollabError("GIT_WORKTREE_FAILED", "worktree baseline is unavailable")
     worktree = Path(base["worktree"])
+    task_relative = base.get("task_root_relative", ".")
     _stage_all(worktree)
     entries = _status_entries(worktree)
     changes = []
+    outside_task_root = []
     for entry in entries:
         path, xy = entry
-        if skipped_dir(path, excludes):
+        task_path = _task_path(path, task_relative)
+        if task_path is None:
+            outside_task_root.append(path)
+            continue
+        if skipped_dir(task_path, excludes):
             continue
         kind = _kind(entry)
         changes.append({"path": path, "kind": kind,
-                        "in_scope": in_scope(path, write_paths),
+                        "in_scope": in_scope(task_path, write_paths),
                         "after": _hash(safe_path(worktree, path)), "git_status": xy})
     changes.sort(key=lambda item: item["path"])
-    write_bytes(run_dir / "worktree.patch", _render_patch(worktree, "HEAD", excludes))
+    write_bytes(run_dir / "worktree.patch", _render_patch(worktree, "HEAD", excludes, task_relative))
     main = Path(base["main_root"])
     main_head = _git_checked(main, "GIT_UNAVAILABLE", "main repository HEAD is unavailable",
                              "rev-parse", "HEAD").stdout.strip()
@@ -305,16 +320,24 @@ def deliver_worktree(run_dir, write_paths, *, excludes=()):
         "head": base["head"], "before_digest": None, "after_digest": None,
         "patch_path": str(run_dir / "worktree.patch"),
         "exclude_paths": list(excludes),
+        "task_root_relative": task_relative,
         "excluded": sorted({entry[0] for entry in entries
-                            if skipped_dir(entry[0], excludes)})[:20],
+                            if _task_path(entry[0], task_relative) is not None
+                            and skipped_dir(_task_path(entry[0], task_relative), excludes)})[:20],
         "changes": changes,
         "out_of_scope": [item["path"] for item in changes if not item["in_scope"]],
+        "outside_task_root": sorted(outside_task_root),
         "main_head_changed": main_head != base["head"],
         "main_changed": (main_head != base["head"]
                          or main_status != base.get("main_status", [])),
         "main_changes": sorted({entry[0] for entry in main_entries})[:50],
     }
     write_json(run_dir / "delivery-manifest.json", result)
+    if outside_task_root:
+        error = CollabError("TASK_ROOT_OUT_OF_SCOPE",
+                            "worker modified files outside the authorized task root")
+        error.manifest = result
+        raise error
     return result
 
 
@@ -359,11 +382,17 @@ def worktree_current_changes(run_dir, write_paths, *, excludes=()):
         return {"available": False, "changes": [], "out_of_scope": [],
                 "current_digest": None, "evidence_mode": "worktree"}
     _stage_all(worktree)
+    task_relative = base.get("task_root_relative", ".")
     old = {item["path"]: item for item in delivery.get("changes") or []}
     current = {}
+    outside_task_root = []
     for entry in _status_entries(worktree):
         path = entry[0]
-        if skipped_dir(path, excludes):
+        task_path = _task_path(path, task_relative)
+        if task_path is None:
+            outside_task_root.append(path)
+            continue
+        if skipped_dir(task_path, excludes):
             continue
         current[path] = {"kind": _kind(entry), "after": _hash(safe_path(worktree, path))}
     changes = []
@@ -377,9 +406,10 @@ def worktree_current_changes(run_dir, write_paths, *, excludes=()):
         else:
             kind = now["kind"]
         changes.append({"path": path, "kind": kind, "after": after,
-                        "in_scope": in_scope(path, write_paths)})
+                        "in_scope": in_scope(_task_path(path, task_relative), write_paths)})
     return {"available": True, "changes": changes,
             "out_of_scope": [item["path"] for item in changes if not item["in_scope"]],
+            "outside_task_root": sorted(outside_task_root),
             "current_digest": None, "evidence_mode": "worktree"}
 
 
@@ -402,7 +432,8 @@ def _rebase_worktree(worktree, base, new_head, run_dir, excludes):
                    {"head": new_head, "conflicts": conflicts})
         raise CollabError("WORKTREE_CONFLICT",
                           "worktree conflicts with the current main repository HEAD")
-    write_bytes(Path(run_dir) / "worktree.patch", _render_patch(worktree, new_head, excludes))
+    write_bytes(Path(run_dir) / "worktree.patch",
+                _render_patch(worktree, new_head, excludes, base.get("task_root_relative", ".")))
     base["head"] = new_head
     base["main_status"] = sorted([list(item) for item in _status_entries(Path(base["main_root"]))])
     write_json(Path(run_dir) / "worktree-base.json", base)
@@ -424,8 +455,14 @@ def assert_worktree_unchanged(run_dir):
         delivery = json.loads((run_dir / "delivery-manifest.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         delivery = {}
+    task_relative = base.get("task_root_relative", ".")
+    outside = [path for path, _ in _status_entries(worktree)
+               if _task_path(path, task_relative) is None]
+    if outside:
+        raise CollabError("TASK_ROOT_OUT_OF_SCOPE",
+                          "worktree contains changes outside the authorized task root")
     _stage_all(worktree)
-    current_patch = _render_patch(worktree, base["head"], delivery.get("exclude_paths", []))
+    current_patch = _render_patch(worktree, base["head"], delivery.get("exclude_paths", []), task_relative)
     if current_patch != patch.read_bytes():
         raise CollabError("WORKTREE_CHANGED_AFTER_DELIVERY",
                           "worktree changed after delivery; deliver and review it again")

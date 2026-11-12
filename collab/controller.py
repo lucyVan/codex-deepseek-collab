@@ -142,7 +142,7 @@ class Controller:
             "summary": {key: summary[key] for key in (
                 "native_status", "error", "outcome_reason", "outcome_unknown",
                 "partial", "continuation_count",
-                "changed_files", "out_of_scope_files", "main_changed", "main_changes",
+                "changed_files", "out_of_scope_files", "outside_task_root_files", "main_changed", "main_changes",
             ) if key in summary},
         }
         if include_review and run.get("review") is not None:
@@ -160,13 +160,16 @@ class Controller:
             "id": run["id"], "version": run["version"], "state": run["state"],
             "outcome_unknown": bool(summary.get("outcome_unknown")),
             "spec_summary": {key: spec[key] for key in (
-                "root_relative", "workspace", "agent_preset", "read_inputs", "write_paths",
+                "root_relative", "workspace", "repository_root", "task_root_relative",
+                "agent_preset", "read_inputs", "write_paths",
                 "exclude_paths", "timeout_seconds",
             ) if key in spec},
             "manifest_summary": {
                 "root": manifest.get("root"),
                 "changed_files": len(manifest.get("changes") or []),
                 "out_of_scope_files": len(manifest.get("out_of_scope") or []),
+                "outside_task_root_files": len(manifest.get("outside_task_root") or []),
+                "outside_task_root": list(manifest.get("outside_task_root") or [])[:20],
                 "main_changed": bool(manifest.get("main_changed")),
                 "main_changes": list(manifest.get("main_changes") or [])[:20],
                 "excluded": list(manifest.get("excluded") or [])[:20],
@@ -251,10 +254,9 @@ class Controller:
         if not root.is_dir() or (root != workspace and workspace not in root.parents):
             raise CollabError("INVALID_PATH", "task root must stay inside the execution workspace")
         repository = git_evidence._toplevel(root)
-        if repository is not None and repository != root:
-            raise CollabError("GIT_EVIDENCE_REQUIRED",
-                              "task root is inside an existing repository; use the repository root instead")
         git_init_required = repository is None
+        repository_root = repository or root
+        task_root_relative = root.relative_to(repository_root).as_posix()
 
         def paths(name):
             values = arguments.get(name, [])
@@ -292,6 +294,8 @@ class Controller:
             "goal": arguments["goal"].strip(),
             "root": str(root), "root_relative": root_rel,
             "workspace": str(workspace),
+            "repository_root": str(repository_root),
+            "task_root_relative": task_root_relative,
             "git_init_required": git_init_required,
             "read_inputs": read_inputs, "write_paths": write_paths,
             "exclude_paths": excludes or (["runtime"] if root_rel == "." else []),

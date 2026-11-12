@@ -5,7 +5,8 @@
 | `SERVICE_UNAVAILABLE` | Controller 未运行或注册失效；先 start 服务，必要时看 logs |
 | `INVALID_INPUT` | 看错误里的 `field`/`message`：常见是 `request_id` 含点号、enum 非法、字段超长 |
 | `GIT_REQUIRED` | 未安装 git；安装后重试 |
-| `GIT_EVIDENCE_REQUIRED` | task root 位于已有仓库的子目录；选择仓库根，不自动创建嵌套仓库 |
+| `GIT_TASK_ROOT_UNAVAILABLE` | 子目录不在父仓库 HEAD 中；先确认路径或将文件纳入仓库，不伪造空目录执行 |
+| `TASK_ROOT_OUT_OF_SCOPE` | worker 修改了 task_root_relative 之外的文件；主仓库不会 apply，检查实际变更后重做 |
 | `GIT_BASELINE_TOO_LARGE` | 单文件超过 100 MiB；缩小范围或排除大文件，不在线初始化基线 |
 | `GIT_BASELINE_FAILED` | 自动初始化或基线提交失败；检查 hooks、权限、已有 `.git` 和磁盘状态 |
 | `ROOT_BUSY` | 同 task root 还有 QUEUED/RUNNING/PAUSED/DELIVERED run；先 review/cancel 再提交 |

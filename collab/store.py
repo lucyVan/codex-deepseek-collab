@@ -205,6 +205,7 @@ class Store:
                     "continuation_count": previous_result.get("continuation_count", 0),
                     "changed_files": len(manifest["changes"]),
                     "out_of_scope_files": len(manifest["out_of_scope"]),
+                    "outside_task_root_files": len(manifest.get("outside_task_root", [])),
                     "main_changed": bool(manifest.get("main_changed")),
                     "main_changes": list(manifest.get("main_changes") or [])[:20],
                 },

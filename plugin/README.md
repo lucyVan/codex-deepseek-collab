@@ -1,4 +1,4 @@
-# Codex × DeepSeek 轻量协作 0.30.0
+# Codex × DeepSeek 轻量协作 0.31.0
 
 仅在用户明确指定 DeepSeek 时派发。DeepSeek 负责授权范围内的实现、执行、修复和复跑；Codex 独立检查实际差异与执行证据，最终接受或拒绝。
 
@@ -18,7 +18,7 @@ QUEUED → RUNNING → DELIVERED → ACCEPTED / REJECTED
                     └→ CANCELLED
 ```
 
-Codex 默认自动携带当前工作区 `execution_workspace`；未提供时才使用服务回退值。`root` 可以是本次 execution workspace 内的现有 git 仓库根或无 Git 目录，其他路径相对 task root。无 Git 时 dry-run 只报告 `git_init_required`，实际 submit 自动初始化并创建安全基线提交；嵌套仓库、超大文件或不安全路径会被拒绝。worker 从 HEAD worktree 执行；Codex 检查 summary、diff、运行证据和最终文件后才 review。
+Codex 默认自动携带当前工作区 `execution_workspace`；未提供时才使用服务回退值。`root` 可以是本次 execution workspace 内的现有 git 仓库根、已有仓库的子目录，或无 Git 目录，其他路径相对 task root。子目录任务复用父仓库，以 `task_root_relative` 限定执行与 patch；子目录外修改返回 `TASK_ROOT_OUT_OF_SCOPE`。无 Git 时 dry-run 只报告 `git_init_required`，实际 submit 自动初始化并创建安全基线提交；无 Git 目录才自动初始化，已有仓库子目录不嵌套初始化；超大文件或不安全路径会被拒绝。worker 从 HEAD worktree 执行；Codex 检查 summary、diff、运行证据和最终文件后才 review。
 
 - `exclude_paths` 同时排除 manifest 和 patch，不会随 ACCEPTED 落盘。
 - 交付后变化返回 `WORKTREE_CHANGED_AFTER_DELIVERY`，不得 apply。

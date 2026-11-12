@@ -1,6 +1,6 @@
 {
   "name": "codex-deepseek-collab",
-  "version": "0.30.0",
+  "version": "0.31.0",
   "description": "以轻量 MCP 服务派发 DeepSeek Harness 任务，记录范围化差异，并由 Codex 独立最终验收。",
   "requires_local_executor": true,
   "skills": "./skills/",
@@ -9,7 +9,7 @@
   "interface": {
     "displayName": "Codex × DeepSeek 协作",
     "shortDescription": "派发 DeepSeek、等待交付并由 Codex 验收",
-    "longDescription": "仅在用户明确指定时派发 DeepSeek。Codex 默认携带当前工作区，单例 MCP Controller 提供 7 个工具，不同 root 最多 2 个任务并发、同 root 串行，支持 request 幂等、run.version、max-tokens 暂停续跑、真实取消和进程清理。无 Git 目录自动创建安全基线提交，DeepSeek 在 HEAD worktree 中实现、执行、修复和复跑；exclude 同时排除证据与 patch，交付后变化和证据缺失均拒绝 apply。DELIVERED 不是验收，Codex 独立检查后最终接受或拒绝。macOS 使用 Bash，Windows 使用 PowerShell；Windows 兼容实现保留，实机验收待完成。",
+    "longDescription": "仅在用户明确指定时派发 DeepSeek。Codex 默认携带当前工作区，单例 MCP Controller 提供 7 个工具，不同 root 最多 2 个任务并发、同 root 串行，支持 request 幂等、run.version、max-tokens 暂停续跑、真实取消和进程清理。无 Git 目录自动创建安全基线提交，已有仓库子目录复用父仓库并限定 task_root_relative，DeepSeek 在 HEAD worktree 中实现、执行、修复和复跑；exclude 同时排除证据与 patch，交付后变化和证据缺失均拒绝 apply。DELIVERED 不是验收，Codex 独立检查后最终接受或拒绝。macOS 使用 Bash，Windows 使用 PowerShell；Windows 兼容实现保留，实机验收待完成。",
     "developerName": "Codex DeepSeek Collaboration",
     "category": "Developer Tools",
     "capabilities": [

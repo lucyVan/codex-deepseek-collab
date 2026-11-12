@@ -20,6 +20,14 @@ if s['goal']=='sleep':
     time.sleep(.4)
     (Path(s['root'])/'out.txt').write_text('after\n')
     result={'status':'EXECUTION_COMPLETED','error':None}
+elif s['goal']=='nested':
+    (Path(s['root'])/'out.txt').write_text('nested-after\n')
+    (Path(s['root'])/'ignored.txt').write_text('ignored-after\n')
+    result={'status':'EXECUTION_COMPLETED','error':None}
+elif s['goal']=='outside':
+    (Path(s['root'])/'out.txt').write_text('nested-after\n')
+    (Path(s['root']).parent/'outside.txt').write_text('outside-change\n')
+    result={'status':'EXECUTION_COMPLETED','error':None}
 elif s['goal']=='pause':
     (Path(s['root'])/'out.txt').write_text('after\n')
     if s.get('resume'):
@@ -64,13 +72,14 @@ class LightweightSchedulerTests(unittest.TestCase):
                                    lambda: None, driver_path=self.driver)
         self.addCleanup(self.scheduler.close)
 
-    def submit(self, goal, request_id, user_root=None, user_workspace=None):
+    def submit(self, goal, request_id, user_root=None, user_workspace=None, **updates):
         root = Path(user_root) if user_root else self.workspace
         workspace = Path(user_workspace) if user_workspace else self.workspace
         spec = {"goal": goal, "root": str(root), "workspace": str(workspace),
                 "read_inputs": ["input.txt"], "write_paths": ["out.txt"], "constraints": [],
                 "acceptance": ["driver finishes"], "agent_preset": "collab-worker",
                 "timeout_seconds": 60}
+        spec.update(updates)
         def prepare(run_id):
             run_dir = self.base / "state/runs" / run_id
             run_dir.mkdir(parents=True)
@@ -205,6 +214,40 @@ class LightweightSchedulerTests(unittest.TestCase):
         self.assertEqual(final["result"]["manifest"]["worktree"], str(worktree))
         git_evidence.apply_worktree(self.base / "state/runs" / run["id"])
         self.assertEqual((self.workspace / "out.txt").read_text(), "after\n")
+
+    def test_nested_task_uses_parent_repo_and_limits_patch(self):
+        nested = self.workspace / "nested"
+        nested.mkdir()
+        (nested / "input.txt").write_text("nested-input\n")
+        (nested / "ignored.txt").write_text("ignored-before\n")
+        git(self.workspace, "add", "nested")
+        git(self.workspace, "commit", "-qm", "nested baseline")
+        run = self.submit("nested", "nested-run", user_root=nested,
+                          repository_root=str(self.workspace), task_root_relative="nested",
+                          write_paths=["out.txt", "ignored.txt"], exclude_paths=["ignored.txt"])
+        final = self.wait_state(run["id"], {"DELIVERED"})
+        manifest = final["result"]["manifest"]
+        self.assertEqual(manifest["task_root_relative"], "nested")
+        self.assertEqual([item["path"] for item in manifest["changes"]], ["nested/out.txt"])
+        patch = (self.base / "state/runs" / run["id"] / "worktree.patch").read_bytes()
+        self.assertNotIn(b"ignored.txt", patch)
+        git_evidence.apply_worktree(self.base / "state/runs" / run["id"])
+        self.assertEqual((nested / "out.txt").read_text(), "nested-after\n")
+        self.assertEqual((nested / "ignored.txt").read_text(), "ignored-before\n")
+
+    def test_nested_task_rejects_changes_outside_task_root(self):
+        nested = self.workspace / "nested"
+        nested.mkdir()
+        (nested / "input.txt").write_text("nested-input\n")
+        git(self.workspace, "add", "nested")
+        git(self.workspace, "commit", "-qm", "nested baseline")
+        run = self.submit("outside", "nested-outside-run", user_root=nested,
+                          repository_root=str(self.workspace), task_root_relative="nested")
+        final = self.wait_state(run["id"], {"FAILED"})
+        self.assertEqual(final["result"]["delivery"]["error"], "TASK_ROOT_OUT_OF_SCOPE")
+        self.assertEqual(final["result"]["manifest"]["outside_task_root"], ["outside.txt"])
+        self.assertFalse((self.workspace / "outside.txt").exists())
+        self.assertFalse((nested / "out.txt").exists())
 
 
 if __name__ == "__main__":

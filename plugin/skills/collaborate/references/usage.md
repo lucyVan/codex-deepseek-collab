@@ -19,7 +19,7 @@
 }
 ```
 
-Codex 默认自动把当前工作区绝对路径填入 `execution_workspace`；未提供时才回退到服务默认值。`root` 相对本次 execution workspace，read/write/exclude 路径相对 task root；**root 可以是现有 git 仓库根或无 Git 目录**。无 Git 时 dry-run 只返回 `git_init_required`，实际 submit 自动初始化并创建安全基线提交；已有仓库子目录不会被嵌套初始化。执行在 execution workspace 的 `.worktrees/<run-id>` 隔离副本中进行，交付标准 git diff/patch；review ACCEPTED 时若主仓库已前进，先 rebase，返回 `REVIEW_BASE_CHANGED`，Codex 重读新 diff 后再 review；冲突返回 `WORKTREE_CONFLICT`，dirty overlap 返回 `WORKTREE_MAIN_DIRTY_CONFLICT`。`exclude_paths` 同时从证据清单和 patch 排除，被排除变化不会应用到主仓库。交付后 worktree 与冻结 patch 不一致时返回 `WORKTREE_CHANGED_AFTER_DELIVERY`，主仓库不变。`dry_run=true` 只校验，不创建 run；非 native 服务只支持 dry-run。
+Codex 默认自动把当前工作区绝对路径填入 `execution_workspace`；未提供时才回退到服务默认值。`root` 相对本次 execution workspace，read/write/exclude 路径相对 task root；**root 可以是现有 git 仓库根、已有仓库的子目录，或无 Git 目录**。子目录任务复用父仓库的 `repository_root`，以 `task_root_relative` 限定执行、manifest 和 patch；子目录外修改返回 `TASK_ROOT_OUT_OF_SCOPE`，不会静默 apply。无 Git 时 dry-run 只返回 `git_init_required`，实际 submit 自动初始化并创建安全基线提交；已有仓库子目录不会被嵌套初始化。执行在 execution workspace 的 `.worktrees/<run-id>` 隔离副本中进行，交付标准 git diff/patch；review ACCEPTED 时若主仓库已前进，先 rebase，返回 `REVIEW_BASE_CHANGED`，Codex 重读新 diff 后再 review；冲突返回 `WORKTREE_CONFLICT`，dirty overlap 返回 `WORKTREE_MAIN_DIRTY_CONFLICT`。`exclude_paths` 同时从证据清单和 patch 排除，被排除变化不会应用到主仓库。交付后 worktree 与冻结 patch 不一致时返回 `WORKTREE_CHANGED_AFTER_DELIVERY`，主仓库不变。`dry_run=true` 只校验，不创建 run；非 native 服务只支持 dry-run。
 
 `collab_submit`/`collab_review` 成功时只返回轻量 run head，不返回完整 spec/result；需要时用 `collab_get`。`request_id` 是持久幂等键，只允许 `[A-Za-z0-9_-]`（不能含点号）；相同输入重试返回原结果，不同输入返回 `IDEMPOTENCY_CONFLICT`；未知结果先查询，不盲目重试。参数校验失败会返回 `INVALID_INPUT`，并在 `field`/`message` 中给出字段级原因。
 

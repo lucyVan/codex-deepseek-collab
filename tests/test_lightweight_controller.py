@@ -161,6 +161,19 @@ class LightweightControllerTests(unittest.TestCase):
                     self.controller.submit(self.arguments(execution_workspace=str(value), dry_run=True))
                 self.assertEqual(caught.exception.code, "INVALID_WORKSPACE")
 
+    def test_nested_task_spec_reuses_parent_repository(self):
+        nested = self.workspace / "nested"
+        nested.mkdir()
+        (nested / "input.txt").write_text("nested\n", encoding="utf-8")
+        git(self.workspace, "add", "nested/input.txt")
+        git(self.workspace, "commit", "-qm", "nested baseline")
+        result = self.controller.submit(self.arguments(root="nested", dry_run=True))
+        self.assertTrue(result["ready"])
+        self.assertEqual(result["spec"]["repository_root"], str(self.workspace.resolve()))
+        self.assertEqual(result["spec"]["task_root_relative"], "nested")
+        self.assertFalse(result["spec"]["git_init_required"])
+        self.assertFalse((nested / ".git").exists())
+
     def plain_controller(self, name):
         root = self.base / name
         root.mkdir()
@@ -243,14 +256,6 @@ class LightweightControllerTests(unittest.TestCase):
         self.assertTrue(replay_review["idempotent_replay"])
         self.assertEqual(replay_review["run"]["state"], "ACCEPTED")
         self.assertFalse((run_dir / "worktree.patch").read_text(encoding="utf-8").strip() == "")
-
-    def test_task_root_must_be_git_repository_root(self):
-        plain = self.workspace / "plain"
-        plain.mkdir()
-        with self.assertRaises(CollabError) as caught:
-            self.controller.submit(self.arguments(root="plain", dry_run=True))
-        self.assertEqual(caught.exception.code, "GIT_EVIDENCE_REQUIRED")
-        self.assertFalse((plain / ".git").exists())
 
     def test_desktop_not_ready_is_reported_before_submit(self):
         down = Controller(self.base / "down-state", self.workspace, {"instance_id": "down"},

@@ -60,9 +60,17 @@ class Scheduler:
                 if workspace != self.workspace:
                     git_evidence.cleanup_orphan_worktrees(self.root, workspace)
                 base = git_evidence.prepare_worktree(
-                    Path(run["spec"]["root"]), run_dir, run["id"], workspace)
+                    Path(run["spec"].get("repository_root", run["spec"]["root"])),
+                    run_dir, run["id"], workspace,
+                    run["spec"].get("task_root_relative", "."))
             execution_spec = dict(run["spec"])
-            execution_spec["root"] = base["worktree"]
+            task_relative = base.get("task_root_relative", ".")
+            execution_root = (Path(base["worktree"]) if task_relative == "."
+                              else Path(base["worktree"]) / task_relative)
+            if not execution_root.is_dir():
+                raise CollabError("GIT_TASK_ROOT_UNAVAILABLE",
+                                  "task root is not present in the repository HEAD")
+            execution_spec["root"] = str(execution_root)
             execution_spec["worktree"] = base["worktree"]
             write_json(run_dir / "execution-spec.json", execution_spec)
             write_json(run_dir / "evidence-mode.json", {"mode": "worktree"})
@@ -123,8 +131,9 @@ class Scheduler:
                 excludes=run["spec"].get("exclude_paths", []))
         except Exception as error:
             code = getattr(error, "code", "RESULT_MANIFEST_FAILED")
-            manifest = {"changes": [], "out_of_scope": [], "before_digest": None,
-                        "after_digest": None, "error": code}
+            manifest = getattr(error, "manifest", None) or {
+                "changes": [], "out_of_scope": [], "before_digest": None,
+                "after_digest": None, "error": code}
             delivery = {**delivery, "status": "FAILED", "error": code,
                         "outcome_reason": "RESULT_MANIFEST_FAILED"}
         finished = self.store.finish(run["id"], delivery, manifest)
