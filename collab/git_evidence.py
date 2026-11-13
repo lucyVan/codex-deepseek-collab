@@ -103,6 +103,24 @@ def repo_root(root):
     return top if top == root else None
 
 
+def verify_head_inputs(repository_root, task_root_relative=".", read_inputs=()):
+    repository_root = Path(repository_root).resolve()
+    head = _git(repository_root, "rev-parse", "--verify", "HEAD")
+    if head.returncode != 0:
+        raise CollabError("GIT_UNAVAILABLE", "git HEAD is unavailable")
+    if task_root_relative != ".":
+        check = _git(repository_root, "cat-file", "-t", f"HEAD:{task_root_relative}")
+        if check.returncode != 0 or check.stdout.strip() != "tree":
+            raise CollabError("GIT_TASK_ROOT_UNAVAILABLE",
+                              "task root is not present in the repository HEAD")
+    prefix = "" if task_root_relative == "." else task_root_relative.rstrip("/") + "/"
+    for rel in read_inputs:
+        check = _git(repository_root, "cat-file", "-t", f"HEAD:{prefix}{rel}")
+        if check.returncode != 0 or check.stdout.strip() not in ("blob", "tree"):
+            raise CollabError("MISSING_INPUT",
+                              f"read input is not present in the repository HEAD: {rel}")
+
+
 def initialize_repository(root, excludes=()):
     """Initialize a repository with a safe baseline so HEAD contains the current task files."""
     root = Path(root).resolve()

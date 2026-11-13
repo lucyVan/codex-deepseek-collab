@@ -13,7 +13,7 @@ class LightweightStoreTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.store = Store(Path(self.temp.name) / "state")
-        self.spec = {"goal": "fixture", "root": self.temp.name, "workspace": self.temp.name,
+        self.spec = {"goal": "fixture", "root": str(Path(self.temp.name) / "root-a"), "workspace": self.temp.name,
                      "read_inputs": [], "write_paths": ["out.txt"], "constraints": [],
                      "acceptance": ["out exists"], "agent_preset": "collab-worker",
                      "timeout_seconds": 60}
@@ -99,8 +99,13 @@ class LightweightStoreTests(unittest.TestCase):
                 with self.assertRaises(CollabError) as caught:
                     self.store.submit(self.spec, "lease-next")
                 self.assertEqual(caught.exception.code, "ROOT_BUSY")
-        other = self.store.submit({**self.spec, "root": self.temp.name + "/other"}, "other-root")
-        self.assertEqual(other["run"]["state"], "QUEUED")
+        for overlapping in (self.temp.name, str(Path(self.temp.name) / "root-a/nested")):
+            with self.subTest(overlapping_root=overlapping):
+                with self.assertRaises(CollabError) as caught:
+                    self.store.submit({**self.spec, "root": overlapping}, "overlap-next")
+                self.assertEqual(caught.exception.code, "ROOT_BUSY")
+        sibling = self.store.submit({**self.spec, "root": str(Path(self.temp.name) / "root-b")}, "other-root")
+        self.assertEqual(sibling["run"]["state"], "QUEUED")
         for state in ("ACCEPTED", "REJECTED", "FAILED", "CANCELLED"):
             with self.subTest(released_state=state):
                 with self.store._db(immediate=True) as db:

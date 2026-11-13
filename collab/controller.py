@@ -12,7 +12,7 @@ import sys
 import threading
 import time
 
-from .common import CollabError, file_lock, write_json
+from .common import CollabError, file_lock, roots_overlap, write_json
 from .desktop_pairing import DesktopPairing
 from .desktop_runtime import _outcome, _terminal, session_stopped
 from .driver import prompt_for
@@ -287,6 +287,8 @@ class Controller:
                 raise CollabError("MISSING_INPUT", f"read input does not exist: {rel}")
         for rel in write_paths:
             safe_path(root, rel)
+        if not git_init_required:
+            git_evidence.verify_head_inputs(repository_root, task_root_relative, read_inputs)
         timeout = arguments.get("timeout_seconds", 1800)
         if type(timeout) is not int or not 60 <= timeout <= 86400:
             raise CollabError("INVALID_INPUT", "timeout_seconds must be between 60 and 86400")
@@ -318,10 +320,24 @@ class Controller:
         spec = self._spec(arguments)
         if len(prompt_for(spec).encode("utf-8")) > MAX_PROMPT_UTF8_BYTES:
             raise CollabError("INVALID_INPUT", "assembled prompt exceeds the controller byte limit")
+        if not dry_run:
+            try:
+                desktop = self.desktop.status()
+            except CollabError:
+                desktop = {"state": "UNAVAILABLE"}
+            if desktop.get("state") != "CONNECTED":
+                raise CollabError(
+                    "DESKTOP_NOT_READY",
+                    "DSH Desktop pairing is not connected; run collab_status for the repair command",
+                )
+            if self.scheduler is None or self.scheduler.closing or self.stopping:
+                raise CollabError("NATIVE_DISABLED", "start the service with --native before submitting work")
         configuration = self._configuration()
         spec["preset_sha256"] = configuration["preset_sha256"]
         if dry_run:
             return {"ready": True, "spec": spec, "execution_configuration": configuration}
+        if any(roots_overlap(active.get("root"), spec["root"]) for active in self.store.blocking_specs()):
+            raise CollabError("ROOT_BUSY", "a previous run still holds this task root")
         if spec["git_init_required"]:
             with file_lock(self.root / "locks/repositories.lock"):
                 initialization = git_evidence.initialize_repository(
@@ -329,17 +345,6 @@ class Controller:
             spec.update(initialization)
         else:
             spec["git_initialized"] = False
-        try:
-            desktop = self.desktop.status()
-        except CollabError:
-            desktop = {"state": "UNAVAILABLE"}
-        if desktop.get("state") != "CONNECTED":
-            raise CollabError(
-                "DESKTOP_NOT_READY",
-                "DSH Desktop pairing is not connected; run collab_status for the repair command",
-            )
-        if self.scheduler is None or self.scheduler.closing or self.stopping:
-            raise CollabError("NATIVE_DISABLED", "start the service with --native before submitting work")
         created = None
 
         def prepare(run_id):
@@ -365,7 +370,10 @@ class Controller:
         if run_id is None:
             return self.store.list(after_row=arguments.get("after_row", 0), limit=arguments.get("limit", 20))
         run = self.store.get(run_id)
-        view = arguments.get("view", "result")
+        view = arguments.get("view") or ("result" if arguments.get("current") else "summary")
+        if view == "summary" and arguments.get("current"):
+            raise CollabError("INVALID_INPUT",
+                              "view=summary does not support current=true; read view=result with current=true separately")
         if view == "summary":
             return self._run_summary(run)
         if view == "history":
@@ -477,7 +485,14 @@ class Controller:
             return self._review_locked(arguments)
 
     def _review_locked(self, arguments):
-        identity = {key: value for key, value in arguments.items() if key != "request_id"}
+        allow_out_of_scope = bool(arguments.get("allow_out_of_scope", False))
+        summary_text = arguments["summary"].strip()
+        checks_list = list(arguments["checks"])
+        identity = {"id": arguments["id"], "expected_version": arguments["expected_version"],
+                    "conclusion": arguments["conclusion"], "summary": summary_text,
+                    "checks": checks_list}
+        if allow_out_of_scope:
+            identity["allow_out_of_scope"] = True
         replay = self.store.replay(arguments["request_id"], "review", identity)
         if replay is not None:
             if isinstance(replay.get("run"), dict):
@@ -486,7 +501,7 @@ class Controller:
         run = self.store.get(arguments["id"])
         root = run["spec"]["root"]
         for active in self.store.running_specs():
-            if active.get("root") == root:
+            if roots_overlap(active.get("root"), root):
                 raise CollabError("RUN_BUSY", "a run is still active on this task root; wait for its terminal state")
         changes = {"available": False, "reason": "NOT_COMPUTED_ON_REVIEW",
                    "use": "collab_get(current=true)"}
@@ -495,13 +510,17 @@ class Controller:
         worktree_mode = manifest.get("evidence_mode") == "worktree"
         if worktree_mode and arguments["conclusion"] == "ACCEPTED" and run.get("state") != "DELIVERED":
             raise CollabError("INVALID_STATE", "only a delivered run can be accepted")
+        if arguments["conclusion"] == "ACCEPTED" and manifest.get("out_of_scope") and not allow_out_of_scope:
+            raise CollabError("WRITE_SCOPE_EXCEEDED",
+                              "delivered changes include files outside write_paths; reject or set allow_out_of_scope=true after inspection")
         if worktree_mode and arguments["conclusion"] == "ACCEPTED":
             if run.get("state") != "DELIVERED" or run.get("version") != arguments["expected_version"]:
                 raise CollabError("VERSION_CONFLICT", "run changed before worktree apply")
             git_evidence.apply_worktree(run_dir, cleanup=False)
         result = self.store.review(
             arguments["id"], arguments["expected_version"], arguments["conclusion"],
-            arguments["summary"].strip(), list(arguments["checks"]), changes, arguments["request_id"],
+            summary_text, checks_list, changes, arguments["request_id"],
+            allow_out_of_scope=allow_out_of_scope,
         )
         if worktree_mode:
             git_evidence.cleanup_worktree(run_dir)

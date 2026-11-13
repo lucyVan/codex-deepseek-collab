@@ -6,7 +6,7 @@
 
 - 单例常驻 MCP Controller，提供 `collab_status`、`collab_submit`、`collab_get`、`collab_wait`、`collab_resume`、`collab_cancel`、`collab_review`。
 - stdio bridge 只转发 MCP；其他受信 client 可连接同一 MCP URL。
-- 不同 task root 最多 2 个 driver 并发，同 root 由 lease 串行。
+- 不重叠的 task root 最多 2 个 driver 并发，同 root 及祖先/子目录重叠路径由 lease 串行。
 - 固定 `collab-worker`，没有 verifier/researcher、多阶段门禁或自动 repair/handoff。
 
 ## 任务与证据
@@ -20,7 +20,7 @@ QUEUED → RUNNING → DELIVERED → ACCEPTED / REJECTED
 
 Codex 默认自动携带当前工作区 `execution_workspace`；未提供时才使用服务回退值。`root` 可以是本次 execution workspace 内的现有 git 仓库根、已有仓库的子目录，或无 Git 目录，其他路径相对 task root。子目录任务复用父仓库，以 `task_root_relative` 限定执行与 patch；子目录外修改返回 `TASK_ROOT_OUT_OF_SCOPE`。无 Git 时 dry-run 只报告 `git_init_required`，实际 submit 自动初始化并创建安全基线提交；无 Git 目录才自动初始化，已有仓库子目录不嵌套初始化；超大文件或不安全路径会被拒绝。worker 从 HEAD worktree 执行；Codex 检查 summary、diff、运行证据和最终文件后才 review。
 
-- `exclude_paths` 同时排除 manifest 和 patch，不会随 ACCEPTED 落盘。
+- `exclude_paths` 同时排除 manifest 和 patch，不会随 ACCEPTED 落盘；超出 `write_paths` 的变更在 ACCEPTED 时默认以 `WRITE_SCOPE_EXCEEDED` 拒绝，除非显式传 `allow_out_of_scope=true`。
 - 交付后变化返回 `WORKTREE_CHANGED_AFTER_DELIVERY`，不得 apply。
 - main HEAD 前进需要 rebase 后重新 review；冲突与证据缺失 fail closed。
 - worktree 清理后 `after_matches_current=null`，`current_changes.available=false`。

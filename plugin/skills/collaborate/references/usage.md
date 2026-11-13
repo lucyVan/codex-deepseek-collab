@@ -36,7 +36,7 @@ version 变大就返回轻量 run head；否则 60 秒后 `timed_out=true`。客
 ## 结果与差异
 
 - `collab_get()`：小页列出 run，after_row 继续。
-- `collab_get(id=..., view="summary")`：轻量概览（状态、spec 摘要、manifest 计数、review 结论），优先使用。
+- `collab_get(id=...)` / `collab_get(id=..., view="summary")`：默认返回轻量概览（状态、spec 摘要、manifest 计数、review 结论），优先使用。
 - `collab_get(id=..., view="result")`：读取完整 spec、delivery、manifest 和 review。
 - `collab_get(id=..., view="diff", offset=0, limit=10)`：分页读取文本 diff；`out_of_scope` 最多返回 20 条并带 `out_of_scope_total/truncated`；`after_matches_current=false` 表示交付后变化，ACCEPTED 会拒绝 apply。worktree 清理后为 null，reason 为 `WORKTREE_CLEANED_UP`。
 - `collab_get(id=..., view="history")`：读取按 version 记录的状态历史。
@@ -46,7 +46,7 @@ write_paths 外变化单独列出；manifest 会带 `root` 与 `excluded`。`col
 
 ## 最终 review
 
-只有 DELIVERED 可以 review。传当前 run.version 作为 expected_version，结论为 ACCEPTED 或 REJECTED，并填写 summary 与 checks。同一 task root 仍有 RUNNING run 时返回 `RUN_BUSY`。Codex 应核对实际文件、执行结果和验收条件；需要独立复跑时在 Codex 会话中执行，或另行派发只读 DeepSeek 任务。
+只有 DELIVERED 可以 ACCEPTED（PAUSED 仅可 REJECTED）。传当前 run.version 作为 expected_version，结论为 ACCEPTED 或 REJECTED，并填写 summary 与 checks。若交付含 `out_of_scope` 文件，ACCEPTED 默认返回 `WRITE_SCOPE_EXCEEDED`；仅在逐项核验后显式传 `allow_out_of_scope=true` 才允许落盘。同一或重叠 task root 仍有 RUNNING run 时返回 `RUN_BUSY`。Codex 应核对实际文件、执行结果和验收条件；需要独立复跑时在 Codex 会话中执行，或另行派发只读 DeepSeek 任务。
 
 拒绝后如需重做，创建新任务，不自动修复或恢复旧 DSH Session。
 

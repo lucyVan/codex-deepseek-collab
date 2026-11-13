@@ -92,3 +92,16 @@ def file_lock(path: Path, timeout: float = 5.0):
             else:
                 import fcntl
                 fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def roots_overlap(first: str | None, second: str | None) -> bool:
+    if not first or not second:
+        return False
+    left = os.path.normcase(os.path.abspath(first))
+    right = os.path.normcase(os.path.abspath(second))
+    if left == right:
+        return True
+    try:
+        return os.path.commonpath((left, right)) in (left, right)
+    except ValueError:
+        return False

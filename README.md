@@ -31,13 +31,14 @@ QUEUED → RUNNING → DELIVERED → ACCEPTED / REJECTED
 
 `PAUSED` 只用于 DSH 因 max output tokens 暂停且仍有余量的情况：保留原 Session 和 worktree，root lease 不释放，不接受部分交付。Codex 检查现场后可用 `collab_resume` 续跑，沿用原 Session、新 prompt request ID 和旧 cursor；总 deadline 不重置，最多续跑 2 次。暂停也可直接拒绝或取消并清理。
 
-root 占用检查与新 run 插入在同一 SQLite 写事务内完成，覆盖 QUEUED/RUNNING/PAUSED/DELIVERED，避免并发提交绕过单 root 排他。续跑按暂停时冻结的 cursor 检查新增输入和本次终态，旧 Controller 消息不算人工接管，旧终态不能替代本次结果；缺少 cursor/事件序号时拒绝续跑。`instructions` 省略时按空串处理，去除首尾空白后统一用于执行及幂等重放。
+root 占用检查与新 run 插入在同一 SQLite 写事务内完成，覆盖 QUEUED/RUNNING/PAUSED/DELIVERED 及同一仓库内的祖先/子目录重叠路径，避免并发提交绕过排他。续跑按暂停时冻结的 cursor 检查新增输入和本次终态，旧 Controller 消息不算人工接管，旧终态不能替代本次结果；缺少 cursor/事件序号时拒绝续跑。`instructions` 省略时按空串处理，去除首尾空白后统一用于执行及幂等重放。
 
 ## worktree 证据与 apply
 
 - task root 可以是现有 git 仓库根、已有仓库的子目录，或无 Git 目录。子目录任务以 `repository_root` 执行 Git 操作，以 `task_root_relative` 限定 worker、manifest 和 patch 范围；子目录外修改返回 `TASK_ROOT_OUT_OF_SCOPE`，不会静默 apply。dry-run 只返回 `git_init_required`；实际提交在无 Git 目录自动 `git init` 并创建安全基线提交，随后从 HEAD 的隔离 worktree 执行。不会在已有仓库内嵌套初始化新仓库。
 - 基线包含现有安全文件，确保 worktree 能看到原目录内容；依赖/缓存目录和 credential-like 文件不进入基线，单文件超过 100 MiB、链接或嵌套仓库会明确拒绝。`baseline_head/files/excluded` 记录实际结果。
-- `write_paths` 标出授权范围，越界变化单列；worktree 是隔离与证据机制，不是 OS 安全沙箱。
+- `write_paths` 标出授权范围，越界变化单列；ACCEPTED 默认拒绝包含 `out_of_scope` 的交付（`WRITE_SCOPE_EXCEEDED`），须重新交由新任务修正或由 Codex 核验后显式传 `allow_out_of_scope=true`。worktree 是隔离与证据机制，不是 OS 安全沙箱。
+- 已有 Git 仓库任务在 submit/dry-run 阶段即校验 `HEAD` 中存在目标子目录与 `read_inputs`；无 Git 目录仅在 Desktop 配对与 native 调度确认就绪后才初始化基线提交。
 - `exclude_paths` 同时从可见 manifest 和最终 patch 排除；这些变化不会在 ACCEPTED 时应用到主仓库。
 - patch 使用原始字节保存，支持二进制和非 UTF-8 内容。
 - 交付后 worktree 内容若与 patch 不一致，ACCEPTED 返回 `WORKTREE_CHANGED_AFTER_DELIVERY`，主仓库不变。

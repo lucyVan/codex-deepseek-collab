@@ -500,6 +500,139 @@ class LightweightControllerTests(unittest.TestCase):
         self.assertEqual(reviewed["run"]["state"], "ACCEPTED")
         self.assertFalse(worktree.exists())
 
+    def test_overlapping_parent_and_nested_roots_are_mutually_exclusive(self):
+        nested = self.workspace / "nested"
+        sibling = self.workspace / "sibling"
+        nested.mkdir()
+        sibling.mkdir()
+        (nested / "input.txt").write_text("nested\n", encoding="utf-8")
+        (sibling / "input.txt").write_text("sibling\n", encoding="utf-8")
+        git(self.workspace, "add", "nested/input.txt", "sibling/input.txt")
+        git(self.workspace, "commit", "-qm", "nested and sibling")
+        parent = self.controller.submit(self.arguments(request_id="overlap-parent", root="."))["run"]
+        with self.assertRaises(CollabError) as caught:
+            self.controller.submit(self.arguments(request_id="overlap-child", root="nested"))
+        self.assertEqual(caught.exception.code, "ROOT_BUSY")
+        self.controller.cancel({"request_id": "overlap-parent-cancel", "id": parent["id"],
+                                "expected_version": parent["version"]})
+        child = self.controller.submit(self.arguments(request_id="overlap-child", root="nested"))["run"]
+        with self.assertRaises(CollabError) as caught:
+            self.controller.submit(self.arguments(request_id="overlap-parent-2", root="."))
+        self.assertEqual(caught.exception.code, "ROOT_BUSY")
+        sibling_run = self.controller.submit(self.arguments(request_id="overlap-sibling", root="sibling"))["run"]
+        self.assertEqual(sibling_run["state"], "QUEUED")
+        self.controller.store.claim_next()
+        run_dir = self.base / "state/runs" / child["id"]
+        base = git_evidence.prepare_worktree(self.workspace, run_dir, child["id"], self.base, "nested")
+        (Path(base["worktree"]) / "nested/out.txt").write_text("after\n", encoding="utf-8")
+        manifest = git_evidence.deliver_worktree(run_dir, ["out.txt"])
+        delivered = self.controller.store.finish(child["id"], {"status": "EXECUTION_COMPLETED"}, manifest)
+        self.addCleanup(git_evidence.cleanup_worktree, run_dir)
+        with self.controller.store._db(immediate=True) as db:
+            db.execute("UPDATE runs SET state='RUNNING' WHERE id=?", (parent["id"],))
+            db.commit()
+        with self.assertRaises(CollabError) as caught:
+            self.controller.review({"request_id": "overlap-review-blocked", "id": child["id"],
+                                    "expected_version": delivered["version"], "conclusion": "ACCEPTED",
+                                    "summary": "blocked by ancestor", "checks": ["checked"]})
+        self.assertEqual(caught.exception.code, "RUN_BUSY")
+
+    def test_existing_git_repo_rejects_untracked_subdir_and_inputs_at_submit(self):
+        untracked_dir = self.workspace / "uncommitted_pkg"
+        untracked_dir.mkdir()
+        (untracked_dir / "input.txt").write_text("draft\n", encoding="utf-8")
+        for dry_run in (True, False):
+            with self.subTest(case="untracked_subdir", dry_run=dry_run):
+                with self.assertRaises(CollabError) as caught:
+                    self.controller.submit(self.arguments(
+                        request_id=f"untracked-dir-{dry_run}", root="uncommitted_pkg", dry_run=dry_run))
+                self.assertEqual(caught.exception.code, "GIT_TASK_ROOT_UNAVAILABLE")
+        tracked_dir = self.workspace / "tracked_pkg"
+        tracked_dir.mkdir()
+        (tracked_dir / "tracked.txt").write_text("tracked\n", encoding="utf-8")
+        git(self.workspace, "add", "tracked_pkg/tracked.txt")
+        git(self.workspace, "commit", "-qm", "tracked subdir")
+        (tracked_dir / "untracked_input.txt").write_text("untracked\n", encoding="utf-8")
+        for dry_run in (True, False):
+            with self.subTest(case="untracked_input", dry_run=dry_run):
+                with self.assertRaises(CollabError) as caught:
+                    self.controller.submit(self.arguments(
+                        request_id=f"untracked-in-{dry_run}", root="tracked_pkg",
+                        read_inputs=["untracked_input.txt"], dry_run=dry_run))
+                self.assertEqual(caught.exception.code, "MISSING_INPUT")
+        self.assertEqual(self.controller.store.counts(), {})
+
+    def test_plain_directory_is_not_initialized_when_desktop_or_native_is_unavailable(self):
+        down_root = self.base / "plain-down"
+        down_root.mkdir()
+        (down_root / "input.txt").write_text("input\n", encoding="utf-8")
+        down = Controller(self.base / "plain-down-state", down_root, {"instance_id": "down-plain"},
+                          native_enabled=True, desktop=DownDesktop(),
+                          scheduler_factory=lambda *args: self.scheduler)
+        self.addCleanup(down.close)
+        with self.assertRaises(CollabError) as caught:
+            down.submit(self.arguments(request_id="plain-down-submit"))
+        self.assertEqual(caught.exception.code, "DESKTOP_NOT_READY")
+        self.assertFalse((down_root / ".git").exists())
+
+        readonly_root = self.base / "plain-readonly"
+        readonly_root.mkdir()
+        (readonly_root / "input.txt").write_text("input\n", encoding="utf-8")
+        readonly = Controller(self.base / "plain-readonly-state", readonly_root, {"instance_id": "ro-plain"},
+                              native_enabled=False, desktop=Desktop())
+        self.addCleanup(readonly.close)
+        with self.assertRaises(CollabError) as caught:
+            readonly.submit(self.arguments(request_id="plain-ro-submit"))
+        self.assertEqual(caught.exception.code, "NATIVE_DISABLED")
+        self.assertFalse((readonly_root / ".git").exists())
+
+    def test_get_defaults_to_summary_and_review_guards_out_of_scope_changes(self):
+        run = self.controller.submit(self.arguments(request_id="scope-guard"))["run"]
+        self.controller.store.claim_next()
+        run_dir = self.base / "state/runs" / run["id"]
+        base = git_evidence.prepare_worktree(self.workspace, run_dir, run["id"], self.base)
+        worktree = Path(base["worktree"])
+        (worktree / "out.txt").write_text("in-scope\n", encoding="utf-8")
+        (worktree / "outside.txt").write_text("out-of-scope\n", encoding="utf-8")
+        manifest = git_evidence.deliver_worktree(run_dir, ["out.txt"])
+        delivered = self.controller.store.finish(
+            run["id"], {"status": "EXECUTION_COMPLETED"}, manifest)
+        self.addCleanup(git_evidence.cleanup_worktree, run_dir)
+
+        default_get = self.controller.get({"id": run["id"]})
+        self.assertIn("manifest_summary", default_get)
+        self.assertNotIn("result", default_get)
+        self.assertEqual(default_get["manifest_summary"]["out_of_scope_files"], 1)
+        full_result = self.controller.get({"id": run["id"], "view": "result"})
+        self.assertIn("result", full_result)
+        self.assertEqual(full_result["result"]["manifest"]["out_of_scope"], ["outside.txt"])
+        current_result = self.controller.get({"id": run["id"], "current": True})
+        self.assertIn("current_changes", current_result)
+
+        with self.assertRaises(CollabError) as caught:
+            self.controller.review({"request_id": "scope-reject-default", "id": run["id"],
+                                    "expected_version": delivered["version"],
+                                    "conclusion": "ACCEPTED", "summary": "accidental accept",
+                                    "checks": ["checked"]})
+        self.assertEqual(caught.exception.code, "WRITE_SCOPE_EXCEEDED")
+        self.assertFalse((self.workspace / "outside.txt").exists())
+        self.assertEqual(self.controller.store.get(run["id"])["state"], "DELIVERED")
+
+        accepted = self.controller.review({"request_id": "scope-explicit-allow", "id": run["id"],
+                                           "expected_version": delivered["version"],
+                                           "conclusion": "ACCEPTED", "summary": "inspected out of scope",
+                                           "checks": ["inspected out.txt and outside.txt"],
+                                           "allow_out_of_scope": True})
+        self.assertEqual(accepted["run"]["state"], "ACCEPTED")
+        self.assertTrue(accepted["run"]["review"]["allow_out_of_scope"])
+        self.assertEqual((self.workspace / "outside.txt").read_text(encoding="utf-8"), "out-of-scope\n")
+        replay = self.controller.review({"request_id": "scope-explicit-allow", "id": run["id"],
+                                         "expected_version": delivered["version"],
+                                         "conclusion": "ACCEPTED", "summary": "  inspected out of scope  ",
+                                         "checks": ["inspected out.txt and outside.txt"],
+                                         "allow_out_of_scope": True})
+        self.assertTrue(replay["idempotent_replay"])
+
 
 if __name__ == "__main__":
     unittest.main()

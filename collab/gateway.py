@@ -1,4 +1,4 @@
-"""Six-tool MCP schema and direct Controller dispatch."""
+"""Seven-tool MCP schema and direct Controller dispatch."""
 from __future__ import annotations
 
 from jsonschema import Draft202012Validator, ValidationError
@@ -32,7 +32,7 @@ SCHEMAS = {
         "dry_run": {"type": "boolean", "default": False},
     }, ("request_id", "goal", "acceptance")),
     "collab_get": object_schema({
-        "id": ID, "view": {"enum": ["result", "summary", "diff", "history"]},
+        "id": ID, "view": {"enum": ["result", "summary", "diff", "history"], "default": "summary"},
         "after_row": {"type": "integer", "minimum": 0},
         "offset": {"type": "integer", "minimum": 0},
         "limit": {"type": "integer", "minimum": 1, "maximum": 100},
@@ -53,6 +53,7 @@ SCHEMAS = {
         "request_id": REQUEST_ID, "id": ID, "expected_version": VERSION,
         "conclusion": {"enum": ["ACCEPTED", "REJECTED"]},
         "summary": TEXT, "checks": {**STRINGS, "minItems": 1},
+        "allow_out_of_scope": {"type": "boolean", "default": False},
     }, ("request_id", "id", "expected_version", "conclusion", "summary", "checks")),
 }
 
@@ -63,7 +64,7 @@ DESCRIPTIONS = {
     "collab_wait": "Wait up to 60 seconds for run.version to exceed after_version. Returns a small run head (id/version/state/summary); use collab_get for details. A timeout only means no newer version; keep waiting and never resubmit.",
     "collab_resume": "Resume a PAUSED max-tokens run using its original DeepSeek Session and worktree. Uses the original total deadline, a new prompt request ID, and events after the previous cursor. Does not create a new task or accept partial work.",
     "collab_cancel": "Request cancellation of a queued, running, or paused task using a stable request_id and expected run version. ACK is not a terminal state.",
-    "collab_review": "Codex independently accepts a DELIVERED run or rejects a DELIVERED/PAUSED run. Returns a small run head plus the review record. Partial paused work cannot be accepted.",
+    "collab_review": "Codex independently accepts a DELIVERED run or rejects a DELIVERED/PAUSED run. Rejects ACCEPTED runs with out_of_scope changes unless allow_out_of_scope=true. Returns a small run head plus the review record. Partial paused work cannot be accepted.",
 }
 READ_ONLY = {"collab_status", "collab_get", "collab_wait"}
 VALIDATORS = {name: Draft202012Validator(schema) for name, schema in SCHEMAS.items()}

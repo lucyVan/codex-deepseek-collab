@@ -7,9 +7,10 @@
 | `GIT_REQUIRED` | 未安装 git；安装后重试 |
 | `GIT_TASK_ROOT_UNAVAILABLE` | 子目录不在父仓库 HEAD 中；先确认路径或将文件纳入仓库，不伪造空目录执行 |
 | `TASK_ROOT_OUT_OF_SCOPE` | worker 修改了 task_root_relative 之外的文件；主仓库不会 apply，检查实际变更后重做 |
+| `WRITE_SCOPE_EXCEEDED` | DELIVERED 含 `write_paths` 之外的文件；默认拒绝 ACCEPTED，应 REJECTED 重做，或在完整核查越界 diff 后显式传 `allow_out_of_scope=true` |
 | `GIT_BASELINE_TOO_LARGE` | 单文件超过 100 MiB；缩小范围或排除大文件，不在线初始化基线 |
 | `GIT_BASELINE_FAILED` | 自动初始化或基线提交失败；检查 hooks、权限、已有 `.git` 和磁盘状态 |
-| `ROOT_BUSY` | 同 task root 还有 QUEUED/RUNNING/PAUSED/DELIVERED run；先 review/cancel 再提交 |
+| `ROOT_BUSY` | 同一或祖先/子目录重叠的 task root 还有 QUEUED/RUNNING/PAUSED/DELIVERED run；先 review/cancel 再提交 |
 | `DESKTOP_NOT_READY` | DSH Desktop 未连接；看 `collab_status` 的 `desktop.repair.command`，重启 App 后重新 pair |
 | `REVIEW_BASE_CHANGED` | 主仓库已前进；worktree 已 rebase，未 apply；重新读 diff 后再 review |
 | `WORKTREE_CONFLICT` | worktree rebase 到新 HEAD 有冲突；不自动解决，worktree 保留，Codex 人工处理或重做 |
@@ -25,8 +26,8 @@
 | `PAUSED` / `MAX_OUTPUT_TOKENS` | 保留 Session/worktree；先检查部分结果，再用 collab_resume 同 Session 续跑，或直接拒绝/取消。不要接受部分 patch |
 | `CONTINUATION_LIMIT` | 已达到最多 2 次续跑；检查剩余工作并改用小任务，不继续盲目续跑 |
 | `RESUME_UNAVAILABLE` | 原 Session、cwd、权限、worktree 或上一次 max-tokens 终态不可确认；不要创建同名新 Session 冒充恢复 |
-| `MISSING_INPUT` | 检查 root 与 read_inputs，不先提交再补输入 |
-| `RUN_BUSY` | 同一 task root 还有 RUNNING run；等它到终态再 review |
+| `MISSING_INPUT` | 检查 root 与 read_inputs 是否存在（已有 Git 仓库还须存在于 `HEAD`），不先提交再补输入 |
+| `RUN_BUSY` | 同一或重叠 task root 还有 RUNNING run；等它到终态再 review |
 | `LIMIT` | 缩小 task root、文件范围或 diff 分页 |
 | wait 60 秒超时 | 只表示 version 未变化，继续 after_version 等待 |
 | cancel 后仍 RUNNING | ACK 不是终态；继续等待 driver 和 DSH 确认取消 |

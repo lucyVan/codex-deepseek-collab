@@ -7,7 +7,7 @@ from pathlib import Path
 import sqlite3
 from uuid import uuid4
 
-from .common import CollabError, canonical, digest, file_lock, now
+from .common import CollabError, canonical, digest, file_lock, now, roots_overlap
 
 
 SCHEMA_VERSION = 1
@@ -158,7 +158,7 @@ class Store:
             # A preflight check outside it cannot exclude simultaneous clients.
             active = db.execute(
                 "SELECT spec FROM runs WHERE state IN ('QUEUED','RUNNING','PAUSED','DELIVERED')")
-            if any(json.loads(row["spec"]).get("root") == spec["root"] for row in active):
+            if any(roots_overlap(json.loads(row["spec"]).get("root"), spec["root"]) for row in active):
                 raise CollabError("ROOT_BUSY", "a previous run still holds this task root")
             run_id = str(uuid4())
             if prepare is not None:
@@ -275,9 +275,12 @@ class Store:
             return {"run": self._get_db(db, run_id)}
         return self.mutate(request_id, "resume", arguments, writer)
 
-    def review(self, run_id, expected_version, conclusion, summary, checks, current_changes, request_id):
+    def review(self, run_id, expected_version, conclusion, summary, checks, current_changes, request_id,
+               *, allow_out_of_scope=False):
         arguments = {"id": run_id, "expected_version": expected_version, "conclusion": conclusion,
                      "summary": summary, "checks": checks}
+        if allow_out_of_scope:
+            arguments["allow_out_of_scope"] = True
         def writer(db):
             current = self._get_db(db, run_id)
             if current["version"] != expected_version:
@@ -285,7 +288,8 @@ class Store:
             if current["state"] != "DELIVERED" and not (current["state"] == "PAUSED" and conclusion == "REJECTED"):
                 raise CollabError("INVALID_STATE", "only a delivered run can be accepted; a paused run can only be rejected")
             review = {"reviewer": "codex", "conclusion": conclusion, "summary": summary,
-                      "checks": checks, "current_changes": current_changes, "created_at": now()}
+                      "checks": checks, "allow_out_of_scope": bool(allow_out_of_scope),
+                      "current_changes": current_changes, "created_at": now()}
             version = current["version"] + 1
             db.execute("UPDATE runs SET version=?,state=?,review=?,updated_at=? WHERE id=?",
                        (version, conclusion, canonical(review).decode("utf-8"), now(), run_id))
